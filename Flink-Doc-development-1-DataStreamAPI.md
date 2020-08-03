@@ -883,14 +883,371 @@ Flink默认的就会把能连在一起的连在一起. `StreamExecutionEnvironme
 | 把一个transformation单独起来 | `someStream.map(...).disableChaining();`                     |
 | 设置Group共享Slot            | Flink会把一个sharingGroup里面的operations放在同一个slot里面. 其他的不会放在他们的slot里面. 这个可以隔绝slots. group里面的每个operator可以从inputOPerator里面继承(数据)过来. someStream.filter(...).slotSharingGroup("name"); 把一个slot放到一个group里面. |
 
-
-
-### Windows
+#### 2. Windows
 
 Windows是无限流里面的核心. windows把流断成一小段一小段的. 我们通过对每一个小段进行计算. 
 
 本小节主要介绍Flink是怎么实现windows的, 程序员怎么最大限度利用windows.
 
+Flink窗口编程的structure长的样子大概是下面代码块里那样: 
+
+```java
+# 1. keyed Windows
+stream .keyBy(...) // 拿keyed Stream
+       .window(...)              <-  required: "assigner"
+      [.trigger(...)]            <-  optional: "trigger"
+      [.evictor(...)]            <-  optional: "evictor"
+      [.allowedLateness(...)]    <-  optional: "lateness"
+      [.sideOutputLateData(...)] <-  optional: "output tag"
+       .reduce/aggregate/fold/apply()      <-  required: "function"
+      [.getSideOutput(...)]      <-  optional: "output tag"
+
+# 1. NoKeyed Windows
+stream
+       .windowAll(...)           <-  required: "assigner"
+      [.trigger(...)]            <-  optional: "trigger" 
+      [.evictor(...)]            <-  optional: "evictor"
+      [.allowedLateness(...)]    <-  optional: "lateness"
+      [.sideOutputLateData(...)] <-  optional: "output tag"
+       .reduce/aggregate/fold/apply()      <-  required: "function"
+      [.getSideOutput(...)]      <-  optional: "output tag"
+```
+
+##### 2.1 Window Lifecycle
+
+消费一个元素的时候, 它所属于的那个window其实就已经创建了, 在用户自定义的的失效时间后, window就完全移除了. Flink的guarantee仅移除time-basedWindow, 不移除其它类型的(比如global).  比方说**创建一个5分钟的window, 允许的lateness是1分钟, 那么[10:00, 10:05]是窗口, 第一个区间内的element进来的时候就创建了, 在watermark过了10:06的时候就会移除掉.**
+
+此外, 每个window都有一个Triggers, 还有一个Function绑定在上面, Trigger指定了window什么时候可以被function消费. 比如说可以理解为"在window里面的element超过了4" 是一个trigger policy. trigger也可以指定什么时候清除Window内的elements(新element也会来).
+
+除了上面之外, 还可以指定一个`Evictor`(驱逐者), 可以在window里面剔除一些element.
+
+下面就开始单独介绍每一个components了
+
+##### 2.2 Keyed vs Non-Keyed Windows
+
+首先要明白我们的stream是不是keyed.
+
+keyed-stream会把相同的key发到同一个并行度的task里面. 如果是no-keyed的就在并行度为1的window function上面处理了.
+
+##### 2.3 Window Assigners
+
+指定了流之后就要制定windowAssigners. 它来定义element怎么被归到哪个window里. 就在调用widow()方法里指定.
+
+Assigner会负责把每个element发送到一个/n个window里面, Flink有一般常用的, tumblingWindows... (除了globalWindows) 都是根据时间来分配elements. 也可以继承`WindowAssigner`来定义. 
+
+timeBasedWindows有开始结束时间规定了window的size. 也提供了一个maxTimestmp()方法来拿允许的最晚时间. 下面介绍几个内置的windowAssigner:
+
+1. **TumblingWindows:** 固定的window size, 没有重叠.
+
+   ```java
+   // tumbling event-time windows
+       keyedStream.window(TumblingEventTimeWindows.of(Time.seconds(5)))
+   // tumbling processing-time windows
+    keyedStream.window(TumblingProcessingTimeWindows.of(Time.seconds(5)))
+   // daily tumbling event-time windows offset by -8 hours.时区
+   keyedStream.window(TumblingEventTimeWindows.of(Time.days(1), 
+                                                  Time.hours(-8)))
+   ```
+
+2. **Sliding Windows:** 固定间隔, 可以有重叠.
+
+3. **Session Windows:** 按照一个session一个session, 没有overlap, 没有固定的时间gap, 断开一段时间就是另一个session了.
+
+4. **Global Windows:** global嘛.
+
+##### 2.4 Window Functions
+
+上面拿到流了, 也分割好window了, 在`trigger`认为window可以被消费了, 那么Functions就开始处理elements了. 
+
+window function有: ReduceFunction, AggregateFunction, FoldFunction和ProcessWindowFunction, 前两个因为聚合功能, 所以执行效率高一点. 最后一个拿到window里面的elementIterator还有window的metadata就开始工作了. 它比较慢, 因为Flink必须把所有的element都缓存下来, 才执行function. 可以多继承一下前面几个有reduce功能的function, 这样既聚合又有metadata. 
+
+1. **ReduceFunction:** 
+
+   reduce就是消费两个, 然后输出一个. 比如可以消费两个integer, 输出一个sum.
+
+2. **AggregateFunction:** 
+
+   也是个广义上的ReduceFunction, 有3个type: IN, AccumulatorType 还有OUT. 实现createAccumulator来自己创建accumulator. TODO: 没看太懂....
+
+3. **FlodFunction:** 对每一个element处理. 然后接收其他的参数.
+
+4. **ProcessWindowFunction:** 这个就是上面说的, 但是它功能比较全面.
+
+5. **ProcessWindowFunction with IncrementAggregation:** 
+
+   两者结合后, window关闭后, processWindowFunction会给一个聚合结果. 这样可以让processWindowFunction递增的计算窗口的element.
+
+6. **在ProcessWindowFunction里面使用per-windowState:** 可以使用scope是window的state了. 还列举了windows的不同解释, 我觉得都是一样的啊...
+
+7. **老版的WindowFunction:** 没有window-State, 和一些其他的高级功能. 
+
+##### 2.5 Triggers
+
+```java
+onElement(); // window每进来一个都会调用
+onEventTime; // 在注册event-time timer的时候
+onProcessingTime;
+// 上面三个, 决定了要不要开始行动: 返回值:
+// CONTINUE: do nothing,
+// FIRE: trigger the computation,
+// PURGE: clear the elements in the window, and
+// FIRE_AND_PURGE: trigger the computation and clear the elements in the window afterwards.
+onMerge(); // merges the states of two triggers 
+clear();     // removal of the corresponding(相应的) window
+// 所有的方法都可以注册timmer.
+```
+
+1. **Fire and Purge:** fire就是开动的, purge就把前面的都干掉.可以多次开火.
+
+2. **默认的Trigger of WindowAssigners:**  event-time windowAssigner有EventTimeTrigger做默认的trigger, 这些trigger一般在watermark过了window结束的时候就fire一下.
+
+3. **Built-In triggers:** 有些内置的trigger: 
+
+   ```java
+   EventTimeTrigger;	// 默认的最后fire一下
+   ProcessingTimeTrigger; // 也是
+   CountTrigger;		// 在limit完成之后就fire一下
+   PurgingTrigger;		// 做个一个参数, 来trigger清空
+   ```
+
+##### 2.6 Evictors(驱逐者)
+
+window里面允许指定`Evictor`操作, 可以从window里面在trigger之后在process之前或之后都可以剔除一些Elements.
+
+- evictBefore()
+
+  在后面的function.process()之前
+
+- evictAfter()
+
+  在后面的function.process()之后
+
+- 内置的Evictor:
+
+  CountEvictor: 保留一定量的, 超过就把前面的剔除掉
+  DeltaEvictor: 设定一个threshold, element的时间差超过就干掉
+  TimeEvictor: 把第一个element之后interval时间外的都干掉
+
+##### 2.7 Allowed Lateness(延迟)
+
+默认, watermark过了之后就扔掉了.  可以为window_operators指定最大的lateness, 也依赖于Trigger, 一个迟到的但没有dropped-element可能会导致window 再fire一次.
+为了迎合迟到的, window的state会保留. 也可以配置把side_output_late_data()
+
+- 迟到element的考虑
+
+  window需要保留content
+  迟到的来了之后可能会引起late_firing. 
+  在session_window里面还会引起window的merge.可能会把两个session连起来??
+  需要考虑之后迟到的element的和原有数据的重复
+
+##### 2.8 Work with window result
+
+操作完了之后还是data_stream, 没有带着window 操作的元数据. 
+如果想要留下来, 需要自己在result_element里面手动放.之后会介绍之后的时间怎么处理.
+
+- watermarks和window的互相影响
+
+  watermark到了window_operator之后, 会做两个事情:
+  会启动所有结束的windows的计算
+  然后把watermark发送给下游.
+
+- 多个并行windowed 之后的操作
+
+  在使用两个并行的的window操作之后向用来做点事情, 就把两个window调的一样了就行.
+
+  ```java
+  DataStream<Integer> resultsPerKey = input.keyBy(<key selector>)
+  ﻿.window(TumblingEventTimeWindows.of(Time.seconds(5)))
+  .reduce(new Summer());
+  
+  DataStream<Integer> globalResults = resultsPerKey.windowAll(TumblingEventTimeWindows.of(Time.seconds(5)))
+  .process(new TopKWindowFunction());
+  ```
+
+- 2.9 state size的实用考虑
+
+  window太大的时候会累积很多的state, 估算储存需求的建议:
+  window里面每个element都会copy一份.
+  ReduceFunction, AggregateFunction, and FoldFunction每个窗口只存一个值. 
+  使用Evictor(剔除者)干掉一些
+
+#### 3. Joining
+
+##### 3.1 Window Join
+
+在同一个window里面, 可以join两个stream里面的相同key的element.
+
+```java
+stream.join(otherStream)
+    .where(<KeySelector>)
+    .equalTo(<KeySelector>)
+    .window(<WindowAssigner>)
+    .apply(<JoinFunction>)
+```
+
+join有点像inner-join. 左边一个右边一个拿
+join是窗内的.
+
+- **Tumbling Window Join**
+
+  平行的一块一块的join.
+
+  <img src="Flink-Doc-development-1-DataStreamAPI.assets/image-20200802201409029.png" alt="image-20200802201409029" style="zoom:50%;" />
+
+- **Sliding Window Join**
+
+  <img src="Flink-Doc-development-1-DataStreamAPI.assets/image-20200802201532604.png" alt="image-20200802201532604" style="zoom:50%;" />
+
+- **Session window join**
+
+  <img src="Flink-Doc-development-1-DataStreamAPI.assets/image-20200802201615166.png" alt="image-20200802201615166" style="zoom:50%;" />
+
+##### 3.2 Interval join(间隔join)
+
+A&B, 相同的key下, A中的element1会joinB中在一个间隔内的的elements.
+
+`b.timestamp ∈ [a.timestamp + lowerBound; a.timestamp + upperBound]`
+
+<img src="Flink-Doc-development-1-DataStreamAPI.assets/image-20200802202333253.png" alt="image-20200802202333253" style="zoom: 50%;" />
+
+#### 3. Process Function
+
+##### 3.1 The ProcessFunction
+
+ProcessFunction是底层的流处理opeation, 可以拿到构建流里面的: events, state, timer.
+
+##### 3.2 Low-level Joins
+
+CoProcessFunction和keyedCoProcessFunction可以把两个stream join.
+
+```java
+// 处理的方法里实现:
+1. 为一个input创建state;
+2. 在收到新的element的时候不断地更新state;
+3. 在另一个处理方法里, 可以拿到state, 自己做join逻辑.
+```
+
+例子: 我们可以join 用户数据到交易数据, 可以在state里保存用户数据, 交易数据来了就使用用户信息自己做join逻辑. 可以用timer来提交join结果;
+
+##### 3.3 例子:
+
+KeyedProcessFunction: 每个key维持一个count, 每一分钟提交最新的<k, count>;
+
+1. valueState里面存key, count, 还有late-modification-timestamp. 
+2. 每次消费的时候都更新一下timestamp
+3. 每一分钟运行统计一下: 检查当前的eventTime和state里面的timestamp, 如果一分钟都没有更新coutn就提交下coutn和timestamp.(可以用sessionWindow)
+
+```java
+public class CountWithTimeoutFunction extends KeyedProcessFunction {
+	private ValueState<CountWithTimestamp> state;
+    // open方法里注册state
+    public void open(Configuration parameters) throws Exception {
+        state = getRuntimeContext()
+            .getState(new ValueStateDescriptor<>("myState", 
+                                              CountWithTimestamp.class));
+    }
+    public void processElement(){
+        // retrieve the current count
+        CountWithTimestamp current = state.value();
+        if (current == null) {
+            current = new CountWithTimestamp();
+            current.key = value.f0;
+        }
+        current.count++;
+        current.lastModified = ctx.timestamp();
+        state.update(current);
+
+        // schedule the next timer 60 seconds from the current event time
+        ctx.timerService()
+            .registerEventTimeTimer(current.lastModified + 60000);
+    }
+    @Override
+    public void onTimer(
+            long timestamp, 
+            OnTimerContext ctx, 
+            Collector<Tuple2<String, Long>> out) throws Exception {
+
+        // get the state for the key that scheduled the timer
+        CountWithTimestamp result = state.value();
+
+        // check if this is an outdated timer or the latest timer
+        if (timestamp == result.lastModified + 60000) {
+            // emit the state on timeout
+            out.collect(new Tuple2<String, Long>(result.key, 
+                                                 result.count));
+        }
+    }
+}
+```
+
+##### 3.4 KeyedProcessFunction
+
+扩展了processFunction, 在onTimer()方法里可以拿到当前的key;
+
+##### 3.5 Timers
+
+TimerService把所有的timer都入队执行; 会把同一个key的同一个定时timmer重复的干掉.
+
+flink会把timer和processElement对state的操作锁住, 不会发生并发修改
+
+**Fault Tolerance**
+
+timer可以容错, 和state一起checkpoint.
+
+恢复的时候过期的timer会马上执行.
+
+**Timer 合并(Coalescing)**
+
+```java
+ctx.timerService().registerProcessingTimeTimer(coalescedTime);
+ctx.timerService().deleteProcessingTimeTimer(timestampOfTimerToStop);
+```
+
+
+
+#### 4. 外部Data Access的异步IO
+
+##### 4.1 异步IO很需要
+
+![image-20200802213045215](Flink-Doc-development-1-DataStreamAPI.assets/image-20200802213045215.png)
+
+##### 4.2 提前准备
+
+需要连接数据库的client, 如果client不支持异步, 可以用线程池维护多个同步client.
+
+##### 4.3 异步I/O API
+
+异步IOAPI可以使用异步request到dataStream , 工作得很好.
+
+1. 一个AsyncFunction来分发请求;
+2. 一个callback在请求回来的时候调用.
+3. 把这个异步operator放在dataStream里面做转换.
+
+```java
+// apply the async I/O transformation
+DataStream<Tuple2<String, String>> resultStream =
+    AsyncDataStream.unorderedWait(stream, new AsyncDatabaseRequest(), 1000, TimeUnit.MILLISECONDS, 100);
+```
+
+配置的参数里: 有timeout, 可以在AsyncFunction#timeout里面做处理. 默认的话抛异常, job重启.
+
+**Order of Result**
+
+有两个模式:
+
+1. unorder: 异步一拿到就发给下游.
+2. Ordered: 保留接收的stream里的顺序.AsyncDataStream.orderedWait(), 会把先回来的缓存.
+
+**Event Time**
+
+1. unorder: record会在watermark之间无序的发出, 
+2. ordered: 本来就是有序的, 直接按照原来的顺序.
+
+**Fault Tolerance Guarantees**
+
+**Caveat(警告)**
+
+TODO????
 
 
 
@@ -898,9 +1255,120 @@ Windows是无限流里面的核心. windows把流断成一小段一小段的. �
 
 
 
+### DataSource
+
+本文描述DataSourceAPI的概念和背后的架构, 如果想了解dataSource在Flink怎么工作 或者想实现一个dataSource.
+##### 1. DataSource 概念:
+
+**核心Components:** Splits, the SplitEnumerator, SourceReader
+1. Split: 是一部分数据, 比如一个文件, 或者是一个log-partition. splits是原分配工作并行数据读取的粒度.
+
+2. SourceReader: 是用来读Splits的, 读split所包含的文件. sourceReader运行在SourceOperator的每个并行度里面.
+
+3. SplitEnumerator: 创建split, 并把它们绑定到SourceReaders上. 在JobManager上单独运行的, 负责维护pending的splits的balance.
+
+  <img src="Flink-Doc-development-1-DataStreamAPI.assets/image-20200804001733820.png" alt="image-20200804001733820" style="zoom:50%;" />
+
+**整合Streaming和Batch**
+DataSource支持无界流和batch, in a unified way.
+其实batch和Stream的区别不大, batch下 Enumerator生成固定的splits集合, 每个split的分割是有限的. stream下, 只能固定下splits或者它的size;
+
+**例子:**  下面有一些简单的例子解释这几个component怎么交互:
+	1. 有界的File源: 
+	源有一个URL文件地址去读:
+		1. 一个split就是一个file, 如果文件的格式可以分割, 那就是file的一部分.
+		2. SplitEnumerator 会把所有文件列出俩, 把splits一个一个的assign到请求的reader上, 所有的split都分好了, 接下来的读请求就返回NoMoreSplits. 结束了.
+	2. 无界的	File源:
+	和有界的一样工作, 只是不会把split分配完. 也会周期性的去检查有没有新文件, 检查到了就生成新的splits等着分配.
+	3. Unbounded Stream KafkaSource:
+	从kafka上读:
+		1. 一个KafkaPartition就是一个Split
+		2. SplitEnumerator把所有topic的所有partition列出来. 也会检查有没有增加.
+		3. SourceReader从分配到Splits(topicPartition), 使用Consumer读.
+	4. Bounded Kafka Source:
+	和无界的kafka一样, 除了, 每个split定一个了endOffset. 一旦SourceReader读到了Split的endOffset就关闭了.
 
 
+##### 2. DataSource API:
+**Source:**
+SourceAPI是工厂模式, 创建四个component: SplitEnumerator, SourceReader, SplitSerializer, EnumeratorCheckpointSerializer.
+除了上面四个, Source也提供了source的boundedness属性, 让Flink选择合适的mode来run这个job.
+Source的实现应该实现Serializable接口, 因为Source实例在Flink运行的时候会被序列化和上传到Flink里.
 
+**SplitEnumerator:**
+SplitEnumerator是Source的心脏, 实现者应该实现功能:
+	1. 处理SourceReader的注册
+	2. 处理SourceReader的失败后调用的方法addSplitsBack(). 在回调的时候要实现coordination.
+	3. 要实现split的discover和assignment.
+SplitEnumerator实现上面三个功能可以借助SplitEnumeratorContext的帮助, context在SplitEnumerator创建/restore的时候提供(自己source实现), 它可以帮助Enumerator存必要的readers信息等. 
+SplitEnumeratorContext有callAsync()方法, 可以handle一些splitEnumerator的维护readers信息刷新啊什么的工作.
+(这里给了个刷新的代码)
+
+**SourceReader: **
+SourceReader在TaskManager上消费Split里面的数据. 提供了pull-based消费接口, Flink会不断地调用pollNext(ReaderOutput)从SourceReader里读. 返回的结果会有SourceReader的一些状态:
+	1. MORE_AVALIABLE: 有可以立即拿到的records
+	2. NOTHING_AVALIABLE: 还有数据, 但现在没有.
+	3. END_OF_INPUT: reader读完了所有的数据, 该关闭了. 
+调用一次pollNext, 可以在ReaderOutput放多个, 但尽量避免. 因为是loop调用的, 不能阻塞.
+SourceReader的state应该在SourceSplits里面维系着, 在snapshotState()的时候会调用. 这样做可以让SourceSplits被assigned到其他的reader.
+SourceReaderContext 也会在Reader创建的时候弄出来, Source应该把context传给Reader. sourceReader可以通过context发送SourceEvent给SplitEnumerator, Source的设计模式就是让SourceReader可以把本地的inxi报告给splitEnumber来统筹全局.
+SourceReaderAPI是底层API, 允许我们手动的处理splits, 可以有自己的线程模型去featch处理数据. Flink提供了SourceReaderBase.class给我们更方便的处理, 不要从头写.
+
+**怎么用Source:**
+把source放到env里面就拿到DataSource了, env就会loop调用我们的pollNext();
+
+##### 3. Split Reader API
+SourceReader API是异步的, 需要手动异步的读取split. 但事实上, 大多数的Source会使用block的操作, 比如调用kafkaConsumer的poll()就会, 调用HDFS的IO操作也会阻塞. 为了和异步的SourceAPI兼容, 同步的操作应该用reader里的异步线程做.
+SplitReader是high-leve的API, 集合了简单的同步reading/polling-based Source实现(fileReading, kafka...)
+核心是上面提到的SourceReaderBased.class, 他给我们splitReader, 创建fetcher线程, 支持不同的消费线程模型.
+
+**SplitReader**
+只有三个方法: block的fetch方法, non-blocking的处理split变动的方法, 不阻塞的唤醒阻塞中的fetch操作.
+splitReader只用关注怎么从外部的split里面读出数据来就好了.
+
+**SourceReaderBase**
+SourceReader的实现都会做几个事情, Base.class就把这些操作封装起来了. 
+	1. 从split里面fetch数据需要的线程池.
+	2. 解决fetching线程和其他的方法调用(pollNext)之间的同步.
+	3. 处理split的watermark对齐.
+	4. 处理split的state 用来checkpoint.
+
+**SplitFetcherManager**
+SourceReaderBase支持几个开箱即用的线程模型, 取决于SplitFetcherManager怎么做的. SplitFetcherManager创建维护一个splitFetcher的池子. 也要管理怎么把split assign到splitReader上面
+
+<img src="Flink-Doc-development-1-DataStreamAPI.assets/image-20200804001903227.png" alt="image-20200804001903227" style="zoom:50%;" />
+
+(这里给了一个管理着固定的SplitFetcher的manager, 按照hashCode把split分给splitFetcher)
+SourceReader会使用这个Manager来从split里面featch.
+
+
+##### 4. Event Time 和 Watermarks
+Source里面需要做一些Event Time assignment 和 Watermark Generation的工作, event stream给sourceReader eventTimestamp 并且包含watermark.
+注意: 旧版的应用通过单独的一步来生成time stamps和watermark 通过stream.assignTimestampsAndWatermarks. 我们现在不能用这个方法了.
+
+**API**
+WatermarkStrategy 通过env.fromSOurce()方法加进去, 会创建TimestampAssigner和WatermarkGenerator.
+这两个在ReaderOutput里面run, 所以source是先不用实现timestamp和watermark的逻辑
+
+**Event Timestamps**
+两步走:
+	1. SourceReader 调用SOurceOutput.collect把sourceRecord的timestamp追加到event里, ()就可以. 一般用在record-based并且有timestamp的源(比如Kafka...).
+		其他的source没有sourceRecord的timestamp.
+	2. TimestampAssigner分配队中的timestamp, 它拿到原始的sourceRecordTimestamp和event, 可以用sourceRecord的时间戳, 或者拿到event里面保存的事件.
+通过两部允许用户可以拿到两个时间戳. 如果不带源时间戳的source(比如说文件) 并且选择源record的时间戳作为最终的eventTimestamp, event会有一个默认的时间戳(LONG.MIN)
+emmmm....没太理解
+
+**Watermark Generation**
+只有在stream执行的时候watermarkGenerator才会工作. batch处理停用water mark Generator. 
+dataSource API 支持在每个split里面运行watermarkGenerator, 这个可以让Flink拿到每个split里面的处理进度. 然后可以更好的处理不同spliteventTime的偏差, 然后防止空闲的split会holding整个应用的eventtime进度.
+(会出现这种情况么??, hold了延迟了一段时间不就过去了?还是watermark机制不太清)
+
+<img src="Flink-Doc-development-1-DataStreamAPI.assets/image-20200804002000985.png" alt="image-20200804002000985" style="zoom: 67%;" />
+使用SplitReaderAPI会自动地handle watermark. 开箱即用.
+底层的SourceReaderAPI做实现的时候, 可以使用split-aware watermark generation, 必须把每个splits的event输出到不同的output: Split-local SourceOutputs. split-localOutput可以在输出的时候调用ReaderOutput.createOutputForSplit(splitID)创建, releaseOutputForSplit(splitId)发送.(看APIDoc)
+
+
+​	
 
 
 

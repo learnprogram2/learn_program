@@ -1430,43 +1430,42 @@ Scala扩展API使用了隐式转换实现了扩展. 下面是一些api列表.
 Java引入了Lambda表达式.  这里的举例就是普通的使用了一下lambda
 
 
+
 ### Project Configuration
+
+
 每个Flink应用都依赖一堆的FlinkLibraries, 下面就介绍Flink应用一般都使用什么lib
 
 #### 1. Flink Core and Application Dependencies:
 用户应用一般有两个大类的依赖:
-- *Flink Core Dependencies:* Flink自己的, 比如coordination, networking, checkpoints, failover, APIs, operations(比如windowing), resourceManagement...
-    这些核心类都打包在了`flink-dist.jar`, 有点像JDK的rt.jar之类的.
-    core了里面没有包括Connector为了避免有太多的不用的东西.
-- *User Application Dependencies:* 是所有的connectors, formats或者其他的自己用的.
-    这些用户应用的依赖被打包到了`application.jar`.
+- *Flink Core Dependencies:* Flink自己的, 比如coordination, networking, checkpoints, failover, APIs, operations(比如windowing), resourceManagement... 这些核心类都打包在了flink-dist.jar, 有点像JDK的rt.jar之类的. core了里面没有包括Connector为了避免有太多的不用的东西.
+- *User Application Dependencies:* 是所有的connectors, formats或者其他的自己用的. 这些用户应用的依赖被打包到了`application.jar`.
 
 #### 2. Setting up a Project: Basic Dependencies
-每个应用都至少需要core. `flink-streaming-java_2.11`, scope是provided/
-如果不设置成provided, 那么轻则jar变大, 重则版本冲突.
+每个应用都至少需要core. flink-streaming-java_2.11, scope是provided/ 如果不设置成provided, 那么轻则jar变大, 重则版本冲突.
 
+#### 3. Adding Connector and Library Dependencies
+大多数的应用都需要特定的conenctor/libraries来运行, 这些connector不是Flink的核心dependencies, 必须单独的添加. 比如添加kafka的connector依赖flink-connector-kafka.
+建议: 把application 代码和它所有需要的依赖打进一个`jar-with-dependencies`里面, 我们称之为application.jar包. 这个jar包可以提交到Flinkcluster里面, 或者放在flink应用容器里.
+哟西. 在下面通过骨架创建可以看一下标准的jar是怎么处理的.
+重要: 想要被打倒包里面的依赖, 要把scope射程compile.
 
+#### 4. Scala Versions
+Scala 版本之间不兼容. 所以项目用多少版本的scala, 就用多少版本的flink. flink后面都有自己用的Scala版本. Java可以选任意Scala版本.
 
-Adding Connector and Library Dependencies
+#### 5. Hadoop Dependencies
+一般规定: 永远不要把hadoop依赖直接加到应用里. 唯一例外就是用Flink的hadoop兼容wrapper使用外部hadoop的输入输出格式.
+使用hadoop最好用有hadoop依赖的flink, 而不要把hadoop放在自己应用的依赖里. 可以refer to HadoopSetupGuide
+这么做的原因有两个:
+- Flink内部里面也有Hadoop交互. 比如HDFSfor checkpoints.
+- Flink做了版本统一.
+如果本地测试需要Hadoop依赖, 把依赖设置成test
 
+#### 6. Maven/Gradle Quickstart
+...
 
-
-
-Scala Versions
-
-
-
-
-
-Hadoop Dependencies
-
-
-
-
-
-Maven Quickstart
-
-
+#### 7. SBT
+这里是做项目的设置了.
 
 
 

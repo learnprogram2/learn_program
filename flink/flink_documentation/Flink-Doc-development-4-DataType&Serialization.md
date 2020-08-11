@@ -137,34 +137,69 @@ env.getConfig().registerTypeWithKryoSerializer(MyCustomType.class, mySerializer)
 
 
 
+## Managing Execution 执行管理
+
+### Execution Configuration 执行参数配置
+`StreamExecutionEnvironment`包含了ExecutionConfig, 里面允许我们取设置一些job的参数. 可以改变job默认的配置.[ConfigurationList](https://ci.apache.org/projects/flink/flink-docs-release-1.11/ops/config.html)
+
+### ProgramPackaging and Distributed Execution, 项目打包和分布式运行
+program一般达成jar包, 在cluster里面运行. 使用[CLI](https://ci.apache.org/projects/flink/flink-docs-release-1.11/ops/cli.html#command-line-interface)接口取运行jar包. 
+
+#### 1. packaging programs:
+为了支持CLI命令接口, 必须用`StreamExecutionEnvironment.getExecutionEnvironment()`这个方法拿到env. 如果jar包使用commandlinke运行的, 拿到的就是cluster的env. 其他方式拿到的是local的.
+打包把main-class制定好就可以运行了.
+
+#### 2. 总结
+启动一个jar的步骤:
+1. jar的mainclass制定好. 在META-INF里面文件里的`main-class`和`program-class`, programClass优先级高. 
+2. 然后调用mainClass.
+
+### Parallel Execution 并行执行
+本小节讲怎么去配置并行执行的job. 
+如果想使用`savepoints`, 我应该设置最大的并行度, 因为在恢复的时候, 也可以修改指定operator或整个的并行度. 这是因为Flink内部把state分配成`key-group`的partition, 有太多的key-group会损害性能. 
+
+#### 1. 设置parallelism
+可以设置不同level的并行度. operator, env的.
+**operator level**
+**Execution Environment Level:** env会为所有的operator指定一个默认的并行度.
+**Client Level:** 在client submit job到flink的时候可以设定. 
+**System Level:** 在Flink及群里可以设定所有job的默认并行度.
+
+#### 2. Setting the maximum parallelism
+默认的最大并行度大概是 `operatorParallelism + (operatorParallelism/2)`, 上下限为[128, 32768]
 
 
+### Execution Plans(执行计划)
+Flin自动优化并选择一个执行计划 根据不同的参数(datasize/cluster). 我们可以知道Flink会怎么执行我们的程序.
+
+#### 1. plan visualization tool
+我们从env里面拿到我们的执行计划: `env.getExecutionPlan()`, 然后flink提供了一个[可视化工具](https://flink.apache.org/visualizer/). 
+
+#### 2. Web Interface
+Flink提供了用于job submit和执行的接口, 是JobManager的监控接口. 我们可以指定程序参数在job执行前. 
 
 
+### Task Failure Recovery
+task报错的时候, Flink就重启相关的task来recover.
+重启策略和failover策略来控制 failed&affected task的重启. Restart策略决定一个failed/affected task是否需要重启和什么时候重启. Failover策略来决定哪个task应该restart整个job.
+
+#### 1. Restart Strategies:
+没指定就用默认的. 默认的restartStrategy通过flink配置文件设置`flink-conf.yaml`. 里面的`restart-strategy`参数制定了策略. 
+下面就是一些配置参数了.
+
+#### 2. Failover Strategies
+也是通过`flink-conf.yaml`文件配置. 可以配置restart all(重启整个job)和restart pipelined region.
+**restart pipelined region:**
+这个策略把task分成不相交的regions. 在有一个task failure了, 策略会计算region最小set, 然后重启.
+一个region是pipeline里面有数据交流的task. 
+1. All data exchanges in a DataStream job or Streaming Table/SQL job are pipelined.
+2. All data exchanges in a Batch Table/SQL job are batched by default.
+data exchange可以铜鼓ExecutionConfig里面的ExecutionMode拿到.
+包含failureTask的region要重启, 如果一个region重启, 他的上游下游都要重启. 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+## API Migration Guides
+...  除妖影响的是用户自定义的state的TypeSerializer.旧的configSnapshot废弃了. 
 
 
 

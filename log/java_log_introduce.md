@@ -1,4 +1,5 @@
 > I read [this artical from Zhihu](https://zhuanlan.zhihu.com/p/50564627). a little know about the relationships between Abstraction Layers and LoggingFrameworks
+> after reading this artical, I look into my project, it use the Logback as Logging, and slf4j as absctraction layer.
 
 
 1. Java中的IO在最初提供了System.err.println, 只能输出到控制台,让控制台一团糟.

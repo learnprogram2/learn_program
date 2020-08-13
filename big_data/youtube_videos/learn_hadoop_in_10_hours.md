@@ -17,4 +17,4 @@
 <img src="learn_hadoop_in_10_hours.assets/image-20200809211228540.png" alt="image-20200809211228540" style="zoom:50%;" />
 
 #### IBM BigData Analytics
-
+.

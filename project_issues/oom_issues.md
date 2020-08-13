@@ -1,0 +1,1 @@
+1. 线上连接MONGODB操作太慢, kafka阻塞了, n百万条数据. 然后持续OOM, checkpoint失败.

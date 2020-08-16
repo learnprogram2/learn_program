@@ -448,7 +448,7 @@ GET /index/type/_search
 
 ### 10. shard&replica机制树立, 单个node里面如何创建index
 
-1. 
+1. Shard&Repilica
 
 
 

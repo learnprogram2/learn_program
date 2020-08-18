@@ -1,3 +1,48 @@
+# Concepts
+
+## Overview
+上面的手动训练解释了Flink的状态流的基本概念, 也提供了怎么使用这些机制. 状态流处理在上面的`DataPiplines&ETL`里面介绍过概念, 也在`FaultTolerance`里面进一步使用了. 实时流也在`StreamingAnalytics`里面介绍了.
+
+Concepts这一节, 介绍更深的理解Flink架构怎么运行的
+
+### Flink's APIs
+Flink提供了多层的抽象结构为我们的开发: ![](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/levels_of_abstraction.svg)
+
+1. 最底层提供了 `Stateful and Timely Stream processing`, 状态流是通过ProcessFunction内置到DataStreamAPI里面的. 这让我们可以自由的处理n个流的事件, 并且提供了持久化, 容错的state. 除此之外, 用户可以注册eventTime和processingTime的callback, 允许我们可以实现更复杂的计算.
+2. 实际上, 很多应用不需要使用底层api, 可以使用CoreAPI进行编程就好了.DataStream/DataSetAPIs.这些流API提供了通用的data处理模块, 比如多种形式的用户自定义转换: Joins, aggregations, windows, state... API里面计算用的DataType是我们编程语言里面的class.
+	底层的ProcessFunction和DataStreamAPI世纪城的, 可以根据需要使用底层的抽象(ProcessFunction). DataSetAPI提供了其他的有界数据的原语: 迭代/循环...
+3. TableAPI是声明表的DSL. 可以动态的修改表(表示stream的时候), tableAPI遵循可扩展的关系模型: 有schema(有点像DB), 提供其他的对比操作(select, project, join, group-by..) tableAPI不提供具体操作代码, 表达能力比CorAPI差, 但是更简单.
+	我们可以在table和dataStream/dataSet之间无缝转换, 混合使用.
+4. 最高层的抽象是SQL, 有点像tableAPI, 但是直接使用SQL查询. SQL抽象与TableAPI紧密结合, 可以在tableAPI上面的表里查询.
+
+
+## Stateful Stream Processing
+### State是什么
+stream里面的操作有的是每个event独立的, 有的需要记住跨event的信息(比如window), 这些操作叫做有状态的.
+状态操作举例:
+1. app在寻找具体event模式的时候, state可以存储event出现的顺序. 
+2. 在整合一段时间的数据时候, state应该拿着在pending的汇总.
+3. 在训练机器学习模型的时候, state应该拿着当前的模型参数.
+Flink需要了解state, 使用checkpoint和savepoint做容错处理. state也允许rescal, 说明flink管理state跨并行度之间的重分配. 
+`Queryable state`允许我们可以在flink外面拿到state.
+在使用state的时候, 也可以阅读`Flink state backends`, flink 提供了不同的statebackend来指定怎么存储. 
+
+### Keyed State
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ## Flink 文档 Concepts
 
 > 现在是1.10版本的, 后面完成之后改成1.11版本的.

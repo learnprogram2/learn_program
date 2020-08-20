@@ -26,3 +26,7 @@ Heap
  Metaspace       used 2529K, capacity 4480K, committed 4480K, reserved 1056768K
   class space    used 282K, capacity 384K, committed 384K, reserved 1048576K
  ```
+ 
+ 
+ 默认的GC: https://blog.csdn.net/youanyyou/article/details/106464291?utm_medium=distribute.pc_relevant_t0.none-task-blog-BlogCommendFromMachineLearnPai2-1.edu_weight&depth_1-utm_source=distribute.pc_relevant_t0.none-task-blog-BlogCommendFromMachineLearnPai2-1.edu_weight
+ 

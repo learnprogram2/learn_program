@@ -9,7 +9,7 @@ parnew和CMS都会STW, 所以G1诞生, 可以提供比`ParNew+CMS`更好的GC性
 2. G1 collector
 	1. G1同时回收新生代老年代. 把**Heap拆分成多个大小相等的Region**.
 		新生代和老年代变成了**逻辑概念**
-		![g1_region](./week5/g1_region.png)
+		![g1_region](./week5.asserts/g1_region.png)
 	2. 可以设置**垃圾回收的预期停顿时间**: 规定每个小时内由GC导致的STW时间不超过xxx, 可以限制GC的影响了
 
 3. G1的可控停顿: 核心思路
@@ -41,7 +41,7 @@ parnew和CMS都会STW, 所以G1诞生, 可以提供比`ParNew+CMS`更好的GC性
 3. G1新生代垃圾回收:
    
    新生代的垃圾回收机制类似之前学的, 新生代的Eden包含的Region中对象越来越多, JVM为新生代分配更多的Region. 在达到上面的新生代占比临界值, 就出发MinorGC, 使用复制算法, ParallelNew STW. 把Eden存活对象放到S1里面.
-   ![](./week5/Minor_GC.png)
+   ![a](./week5.asserts/Minor_GC.png)
 
    区别是: G1有STW限制的, 会对每个Region的回收和时间做评估. 尽量回收多的.
 
@@ -69,12 +69,12 @@ parnew和CMS都会STW, 所以G1诞生, 可以提供比`ParNew+CMS`更好的GC性
 1. 新生代+老年代的混合回收 什么时候触发
    
    `-XX:InitiatingHeapOccupancyPercent` 的回收阈值, 老年代达到了堆的百分比(默认45%) 会触发MinorGC+FullGC. 
-   ![](./week5/Full_Minor_GC.png)
+   ![](./week5.asserts/Full_Minor_GC.png)
 
 2. G1回收过程
    
    1. 首先出发`初始标记(STW)`, 只会标记GCRoots直接引用对象, 速度很快. 
-		![firstMark](./week5/first_mark.png)
+		![firstMark](./week5.asserts/first_mark.png)
    
    2. 然后进入`并发标记(no STW)`, 从GCRoot追踪存活对象. 耗时比较长. 但是不影响工作. 会对并发阶段的对象修改做记录(新建对象/新垃圾对象)
    3. `最终标记(STW)`, 根据并发标记阶段的修改记录做确认, 存活对象垃圾对象.
@@ -85,7 +85,7 @@ parnew和CMS都会STW, 所以G1诞生, 可以提供比`ParNew+CMS`更好的GC性
    
    其实混合回收阶段会伴随多次回收, 从新生代, 老年代都回收一些Region, STW回收一些, consume to work, STW再回收一些.  `-XX:G1MixedGCCountTarget`控制混合回收最后的混合阶段执行多少次混合回收, 默认8次. 让系统不会停顿太长.
    比如160个region, 8次, 每次会回收20个. 
-   ![](./week5/mix_gc.png)
+   ![](./week5.asserts/mix_gc.png)
 
 	`-XX:G1HeapWastePercent` 默认5%, **混合回收的算法都是复制算法回收**, 把region里面存活的放到一个region里, 干掉老的region. 一旦空闲出了5%的region, 停止混合回收.
 
@@ -146,6 +146,7 @@ parnew和CMS都会STW, 所以G1诞生, 可以提供比`ParNew+CMS`更好的GC性
 ### 34. 作业: 第一阶段复习, 系统部署如何设置JVM参数
 
 TODO 复习作业, 对五周内容座署理. 
+![](./week5.asserts/JVM1-5_conclusion.png)
 
 
 ### 35. 经典问题:

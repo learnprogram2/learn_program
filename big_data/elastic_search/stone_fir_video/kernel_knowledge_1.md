@@ -436,7 +436,7 @@ GET /index/type/_search
 
 4. master节点:
 
-   管理es集群的元数据:索引创建和删除,...... 不成姐所有请求. 
+   管理es集群的元数据:索引创建和删除,...... 不承接所有请求. 
 
 5. 节点平等的分布式架构:
 
@@ -578,7 +578,7 @@ GET /index/type/_search
 
 4. **_source元数据:**
 
-   **document的所有field.** 也可以指定返回field返回,
+   **document的所有field.** 也可以指定返回field
 
    ```json
    GET /index/type/id?_source=field2,field3

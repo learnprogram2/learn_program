@@ -264,7 +264,7 @@
 
    `-XX:+CMSParallelInitialMarkEnabled`: 初始标记开启多线程并发标记.
 
-   `-XX:+CMSScavengeBeforeRemark`: 重新标记阶段之前, **尽量YoungGC一次. 这样,CMS重新标记就会少一些对象.** ??? 
+   `-XX:+CMSScavengeBeforeRemark`: 重新标记阶段之前, **尽量YoungGC一次. 这样,CMS重新标记就会少一些对象.** 
 
    > 因为: 初始标记和重新标记都会扫描整个Heap的对象，要找gc roots
 

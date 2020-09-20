@@ -54,6 +54,7 @@ MVCC的基础建立在undo log 的version chain上.
 1. 多个事务并发运行的时候, 会出现脏写, 脏读, 不可重复读, 幻读.
 2. 针对这些问题, 有了RU, RC, RR, Serialize 四个隔离级别
 3. MySQL基于undo-log version-chain+ReadView实现MVCC机制. 默认的RR隔离机制. 避免了四种并发问题.
+4. 幻读: 也被ReadView解决了.
 
 
 
@@ -77,6 +78,8 @@ MVCC的基础建立在undo log 的version chain上.
 
 
 
+
+
 ### 59. MySQL锁机制: 共享锁和独占锁 (行锁)
 
 - 上面介绍的悲观锁是X锁, Exclude独占锁, 写锁. : **行锁**
@@ -91,8 +94,8 @@ MVCC的基础建立在undo log 的version chain上.
   ```sql
   # 使用共享锁: lock in share mode
   select * from table_name lock in share mode
-```
-  
+  ```
+
 - **S, X两个锁互斥**
 
 - **S锁之间不互斥.** : **一般不加共享锁... 反而基于分布式锁控制不可写.**
@@ -107,6 +110,20 @@ MVCC的基础建立在undo log 的version chain上.
    - **查询的时候添加X/S锁.** 
 
    > 不建议使用数据库里面的行锁实现业务锁. 而是使用分布式锁. 
+   
+3. **间隙锁** 独占锁
+
+
+
+### 间隙锁-幻读: 
+
+事务读取一个区间会占有区间内的间隙锁, 防止幻读.
+
+间隙锁锁的是索引, ReadView记录的是事务ID, 事务ID放在了数据行和redo-log里面.
+
+
+
+
 
 
 
@@ -122,6 +139,7 @@ MVCC的基础建立在undo log 的version chain上.
      Lock TABLES table_name READ; # S锁
      Lock TABLES table_name WRITE; # 独占锁
      ```
+
 
    - **表级的意向锁:** `不与行级锁冲突`
 
@@ -180,3 +198,7 @@ MVCC的基础建立在undo log 的version chain上.
 
 
 
+
+```
+
+```

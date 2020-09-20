@@ -24,7 +24,7 @@ DB肯定从插入数据开始. 然后CRUD. 在准备好压测过的, 有完整�
 
    - 如果要更新, DB会找到数据所在的数据页, 从磁盘里把数据页直接加载到Buffer Pool里
 
-     <img src="Untitled.assets/image-20200907225719009.png" alt="image-20200907225719009" style="zoom:50%;" />
+     ![image-20200920123618181](week3-buffer_pool.assets/image-20200920123618181.png)
 
 3. **磁盘上的数据页 对应到 Buffer Pool的缓存页**
 
@@ -36,7 +36,9 @@ DB肯定从插入数据开始. 然后CRUD. 在准备好压测过的, 有完整�
 
    每个缓存页的描述数据放在buffer Pool前面. 大概相当于缓存页的5%(800bytes左右)
 
-   <img src="Untitled.assets/image-20200907230835779.png" alt="image-20200907230835779" style="zoom:50%;" />
+   ![image-20200920123644339](week3-buffer_pool.assets/image-20200920123644339.png)
+
+   
 
 5. **思考题:**
 
@@ -56,7 +58,7 @@ DB肯定从插入数据开始. 然后CRUD. 在准备好压测过的, 有完整�
 
    **DB为Buffer Pool设计出Free双向链表存放空闲的描述数据块的地址**. Buffer Pool初始化之后描述数据块就都会放在Free链表里.
 
-   <img src="Untitled.assets/image-20200907233032491.png" alt="image-20200907233032491" style="zoom:50%;" />
+   ![image-20200920123703730](week3-buffer_pool.assets/image-20200920123703730.png)
 
 3. Free链表大小
 
@@ -71,7 +73,7 @@ DB肯定从插入数据开始. 然后CRUD. 在准备好压测过的, 有完整�
 
    数据库有一个Hash表结构, 表空间号+数据页号作为key, 缓存页的地址作为value. 只要查一下就可以看到有没有缓存
 
-   ![image-20200907235203318](Untitled.assets/image-20200907235203318.png)
+   ![image-20200920123720983](week3-buffer_pool.assets/image-20200920123720983.png)
 
 6. **思考题**
 
@@ -91,7 +93,7 @@ DB肯定从插入数据开始. 然后CRUD. 在准备好压测过的, 有完整�
 
    引入了flush链表.  类似于free链表, 利用描述数据中两个指针组成双向链表. **所有的修改过的缓存页的描述数据块都会被加入到flush链表中**
 
-   ![image-20200908000517428](Untitled.assets/image-20200908000517428.png)
+   ![image-20200920123738317](week3-buffer_pool.assets/image-20200920123738317.png)
 
 
 

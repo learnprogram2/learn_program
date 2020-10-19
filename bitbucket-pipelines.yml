@@ -4,4 +4,4 @@ pipelines:
   default:
     - step:
         script:
-          - git push --mirror git@github.com:learnprogram2/framework_documents.git
+          - git push git@github.com:learnprogram2/framework_documents.git bitbucket

@@ -4,4 +4,4 @@ pipelines:
   default:
     - step:
         script:
-          - git push git@github.com:learnprogram2/framework_documents.git bitbucket
+          - git push -branch bitbucket git@github.com:learnprogram2/framework_documents.git 

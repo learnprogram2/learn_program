@@ -4,4 +4,4 @@ pipelines:
   default:
     - step:
         script:
-          - git push --repo git@github.com:learnprogram2/framework_documents.git bitbucket
+          - git push --all --repo git@github.com:learnprogram2/framework_documents.git

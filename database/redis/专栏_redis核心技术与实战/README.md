@@ -97,7 +97,7 @@ client-output-buffer-limit参数限制这个buffer的大小，如果超过限制
 
 问题:
 1. 主从库全量复制的时候是不是用这个长连接啊?
-老师, 我还想问一个问题: 主从库建立起的这个"命令传播的长连接", 是刚开始第一步slave发送replicaof命令的时候就建立好一直维持的吗? 还是什么时候啊
+	主从库建立起的这个"命令传播的长连接", 是刚开始第一步slave发送replicaof命令的时候就建立好, 分配buffer一直维护的
 
 
 
@@ -133,13 +133,83 @@ client-output-buffer-limit参数限制这个buffer的大小，如果超过限制
 
 问题: 
 1. 切换过程中，客户端能否正常地进行请求操作呢
+	读正常, 写失败, 失败的时间: 从master挂掉, 到client感知到new master.
+	如果要容错, 可以client先把写命令缓存起来.
+	
+
+
+
+## 10.22 
+
+### 08 | 哨兵集群：哨兵挂了，主从库还能切换吗？
+
+#### a. 基于 pub/sub 机制的哨兵集群
+
+主从集群中，主库上有一个"__sentinel_:hello"的频道, 不同哨兵就是通过它来相互发现和通讯. 
+哨兵和master建立连接, 就可以通过channel来发布自己的连接信息, 获取其他sentinel的连接信息.
+![](https://static001.geekbang.org/resource/image/ca/b1/ca42698128aa4c8a374efbc575ea22b1.jpg)
+
+sentinel向master周期发送INFO命令, master响应集群的从库列表, 和slave建立连接
+![](https://static001.geekbang.org/resource/image/88/e0/88fdc68eb94c44efbdf7357260091de0.jpg)
+
+#### b. 基于 pub/sub 机制的客户端事件通知
+哨兵是特殊模式的redis, sentinel之间通过"__sentinel_:hello"通讯. sentinel和client之间也通过多个channel来交互事件.
+![哨兵发布事件的channel](https://static001.geekbang.org/resource/image/4e/25/4e9665694a9565abbce1a63cf111f725.jpg)
+client从channel里面拿到各种事件, switch-master命令会告诉新的master地址. 
+问题: client刚开始怎么知道sentinel的?
+答: 客户端读服务的配置文件，配置文件写了哨兵的地址和端口，然后客户端去连哨兵拿信息.
+
+
+#### c. 由哪个哨兵执行主从切换？ 客观下线 和 leader选举是分开的哦.
+1. 多个sentinel都判断主管下线, 多数就变成客观下线.
+2. 判断master主观下线的sentinel 给其他实例发送 `is-master-down-by-addr`命令, 其他sentinel响应Y/N 
+3. sentinel收到超过quota的Y之后, 就判断master客观下线了.
+4. 这个sentinel想起他的sentinel发送命令, 希望自己执行主从切换. 可能有多个sentinel参与选举, 这是*Leader选举*.
+5. 拿到半数赞成票, 而且这个票数大于上面的quota的sentinel成为哨兵Leader.
+6. sentinelLeader负责按照打分机制把一个slave变成master. 
+![](https://static001.geekbang.org/resource/image/e0/84/e0832d432c14c98066a94e0ef86af384.jpg)
+![](https://static001.geekbang.org/resource/image/5f/d9/5f6ceeb9337e158cc759e23c0f375fd9.jpg)
+注意: 
+1. 如果只有2个sentinel, 挂掉一个无法满足过半数的要求, 所以sentinel至少3个.
+2. 要保证所有sentinel配置一致, 如果down-after-milliseconds不同, 对masterdown的判断就不同, 服务不稳定.
+
+问题: 
+1. 假设有一个 Redis 集群，是“一主四从”，同时配置了包含 5 个哨兵实例的集群，quorum 值设为 2。在运行过程中，如果有 3 个哨兵实例都发生故障了，此时，Redis 主库如果有故障，还能正确地判断主库“客观下线”吗？如果可以的话，还能进行主从库自动切换吗？此外，哨兵实例是不是越多越好呢，如果同时调大 down-after-milliseconds 值，对减少误判是不是也有好处呢？
+	我觉得可以完成客观下线, quorum是2,两个都认同, 就下线了.
+	不能完成Leader选举, 没法达到半数.
 
 
 
 
+### 09 | 切片集群：数据增多了，是该加内存还是加实例？
 
+![切片集群架构图](https://static001.geekbang.org/resource/image/79/26/793251ca784yyf6ac37fe46389094b26.jpg)
+#### a. 数据切片和实例的对应分布关系
+Redis Cluster 用HashSlot 来处理数据和实例之间的映射关系. 每个key按照CRC16算出一个16bit的hash, 然后对16384(14bit)取模, 得到slot.
+通过`cluster create`命令创建, slot平均分配给所有的实例. `cluster meet`命令可以手动建立集群.
+![](https://static001.geekbang.org/resource/image/7d/ab/7d070c8b19730b308bfaabbe82c2f1ab.jpg)
+问题: 谁算对应的slot这个呢? client么
 
+#### b. 客户端如何定位数据？
+1. redis每个实例在收到自己的slot信息, 会把它发给其他的redis, 大家都有了.
+2. client连接cluster, 会收到集群的slot映射信息, 缓存起来.
+3. client每次发key的时候, 计算好自己应该发给谁.
+4. 如果slot有调整, client发错了, redis会重定向client, 通过MOVE响应
+```text
+GET hello:key(error) 
+MOVED 13320 172.16.19.5:6379
+# 键对应的13320slot, 应该是172.16.19.5实例.
+```
+![moved重定向](https://static001.geekbang.org/resource/image/35/09/350abedefcdbc39d6a8a8f1874eb0809.jpg)
+5. 如果slot正在迁移给其他的redis中, 那么client会受到ask报错响应. 返回slot正在迁往的redis
+6. client会给新的redis, 发送Asking空信息, 告诉他必须接受请求了.
+7. client再发送给新的redis GET命令.
+8. 注意: ask响应不会把client的slot映射给更新, 万一迁移失败呢.
+![ask重定向](https://static001.geekbang.org/resource/image/e9/b0/e93ae7f4edf30724d58bf68yy714eeb0.jpg)
 
+问题: 如果一个表直接放key和redis的映射, 不用CRChash计算key和slot了, 为什么不可以? 空间太大了.
+
+总结: redis3.0之后才出, 和codis的区别就是一个是中央代理, 一个是平等的集群. 都是拿slot
 
 
 

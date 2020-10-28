@@ -577,6 +577,137 @@ GET /forum/_search
 
   
 
+### 21. 使用rescoring重打分优化近似搜索性能
+
+因为phrase search在简单的match上面还要进行term匹配到的token的position判断. 所以性能低.
+
+match_query 比 phrase_match/proximity_match要高10/20倍, 
+
+- 优化proximity_match的性能: 减少proximity_match要分析的doc数量: 
+
+  **使用match_query先过滤一下**, 然后用proximity_match来分析term命中的tocken的position. 
+
+  **proximity_match只分析每个shard的分数前window_size个doc, 重新调整docs的分数, 这就是 rescoring.** 因为用户会分页查询, 不需要所有结果进行proximity_match.
+
+```json
+GET /forum/_search
+{
+  "query": {
+    "match": {
+      "content": "java es"
+    }
+  },
+  "rescore": {
+    "query": {
+      "rescore_query": {
+        "match_phrase": {
+          "content": {
+            "query" : "java es",
+            "slop" : 50
+          }
+        }
+      }
+    },
+    "window_size": 50
+  }
+}
+```
+
+
+
+
+
+### 22. 前缀, 通配符, 正则 搜索.
+
+- 前缀搜索: 不计算相关度分数:
+
+  **prefix_query和prefix_filter的区别是:filter会cache bitset.**
+
+  前缀越短搜索到的doc越多, 性能越差.
+
+  ```json
+  GET /forum/_search
+  {
+    "query": {
+      "prefix": {
+        "content": {
+          "value": "jav"
+        }
+      }
+    }
+  }
+  ```
+
+  - **前缀搜索性能差: 因为要搜索所有的token才能把所有prefix都找到.** term/match搜索, 只需要匹配到一个token就找到了所有的doc.
+
+- 通配符搜索: 
+
+  ```json
+  GET /forum/_search
+  {
+    "query": {
+      "wildcard": {
+        "title": {
+          "value": "this"
+        }
+      }
+    }
+  }
+  ```
+
+- 正则搜索:
+
+  ```json
+    "query": {
+      "regexp": {
+        "title": {
+          "value": "this"
+        }
+      }
+    }
+  ```
+
+  
+
+
+
+
+
+### 23. 使用match_phrase_prefix实现search-time搜索推荐
+
+**是phrase_match类似, 只不过query短语中最后一个单词term作为prefix去匹配.**
+
+比如"hello w", 就会匹配"hello world".
+
+最后一个term还是会扫描大量的doc.
+
+
+
+### 24. 使用ngram分词器 实现 index-time 搜索推荐
+
+
+
+- **ngram: 一个term分词, 可以拆分成多个长度的前缀的ngram(n个豆豆)**
+
+  比如: hello, 再ngram_length=3的时候, 就可以拆分出3个长度的前缀: h, he, hel.
+
+  ngram就是拆分前缀, length就是限制拆出多长的前缀来.
+
+- **用途: 前缀搜索推荐功能, 替代前缀搜索.**
+- **使用:** 
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

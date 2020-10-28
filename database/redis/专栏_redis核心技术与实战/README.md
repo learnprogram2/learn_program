@@ -289,6 +289,34 @@ RedisObject 的包括了 type,encoding,lru 和 refcount 4 个元数据，以及 
 
 
 
+## 10.28 周三
+
+### 14 | 如何在Redis中保存时间序列数据？
+
+#### a. 时间序列数据的读写特点
+1. 插入数据快, 复杂度要低.
+2. 查询, 单条记录, 还需要时间范围查询, 聚合查询
+所以可以基于 Hash 和 Sorted Set 实现.
+
+#### b. 基于 Hash 和 Sorted Set 保存时间序列数据
+Sorted Set 只支持范围查询，无法直接进行聚合计算
+RedisTimeSeries 这个第三方扩展可以实现.
+
+问题: zset的dict里面k-v分别是什么??? 是分数-value, 还是value-分数
+
+### 15 | 消息队列的考验：Redis有哪些解决方案？
+消息队列在存取消息时, 必须要满足三个需求, 分别是消息保序, 处理重复的消息和保证消息可靠性。
+解决方案: 
+![list的dr](https://static001.geekbang.org/resource/image/50/3d/5045395da08317b546aab7eb698d013d.jpg)
+1. 基于 List 的消息队列解决方案
+	消息顺序保证, 需要自己设计唯一ID预防重复发送, BRPOPLPUSH命令做消息ACK;
+	- 不支持多个消费者的消费组概念.
+2. 基于 Streams 的消息队列解决方案
+	模仿Kafka的消息队列, 顺序可以保证, 有自带的唯一ID
+	- 支持group
+![List和Stream作为消息队列的对比](https://static001.geekbang.org/resource/image/b2/14/b2d6581e43f573da6218e790bb8c6814.jpg)
+redis的消息队列适用于消息量并不是非常巨大, 数据不是非常重要.
+
 
 
 

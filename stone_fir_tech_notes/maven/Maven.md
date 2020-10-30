@@ -298,7 +298,7 @@ maven扩展功能时候, 就配置一个插件, 把插件绑定到phase里, 在m
 1. 每个插件有多个goal, 每个goal是单个的功能实现.
 2. plugin标签下, resource标签是resource:resource这个goal的资源配置.
 
-3. 把plugin绑定到phase:
+3. 把plugin绑定到phase: 如果不配, plugin也会有默认绑定的phase
 
    ```xml
    <build>
@@ -350,15 +350,96 @@ maven扩展功能时候, 就配置一个插件, 把插件绑定到phase里, 在m
 
    
 
+### 27. 实战: 基于继承功能统一所有模块的依赖版本
 
 
 
+1. 在子工程的pom里声明parent标签, 继承父工程的全部有效依赖
+2. 在父工程使用depdendencyManagement标签规定子工程依赖版本.
+3. 在父工程使用pluginManagement标签规定子工程的plugin版本和配置.
 
 
 
+### 28. 实战: 使用property用占位符{}在POM内集中约束版本号
 
 
 
+### 29. 实战: 基于import_pom传递dependency_management
+
+前提: 在dependencyManagement标签里可以接受其它的pom里面整理的management.
+
+```xml
+	<dependencyManagement>
+       <dependencies>
+           <dependency>
+               <groupId>com.zhss.commons</groupId>
+               <!--这个项目是pom项目, 弄了management, scope=import可以导进来.-->
+               <artifactId>commons-flow-bom</artifactId>
+               <version>1.2.9</version> 
+               <type>pom</type>
+               <scope>import</scope>
+           </dependency>
+       </dependencies>
+   	</dependencyManagement>
+```
+
+
+
+### 30. 案例业务模型: 开发OA系统的web服务
+
+
+
+### 31. 实战: surefire插件单元测试和代码覆盖率: jacoco+unitest?
+
+
+
+### 32. 实战: 使用Jetty插件启动server
+
+冒烟测试: 简单的整体跑起来. web server可以很好的帮助冒烟测试一下
+
+settings.xml文件里的pluginGroups, 可以理解为mvn运行plugin的隐形坐标:
+
+org.mortbay.jetty:jetty 插件, 如果有了pluginGroup, 就可以用jetty缩写来执行插件命令了.
+
+```hxml
+<pluginGroups>
+	<pluginGroup>org.mortbay.jetty</pluginGroup>
+</pluginGroups>
+```
+
+
+
+### 33. 实战: 基于cargo对web服务进行自动化部署
+
+
+
+### 34. 实战: 基于资源过滤+profile功能自动适配各个发布环境
+
+maven profile可以配置多个环境的resource; 在mvn的deploy参数中传入profile的名字激活.
+
+
+
+### 35: 版本管理和版本控制的区别以及关系
+
+版本管理: 项目开发迭代的版本: x.x.x.  粗粒度的开发: maven的pom版本控制.
+
+版本控制: git, svn. 细粒度的变化历史
+
+![05_maven和git之间的关系](D:/fir_tutorial/Maven/maven%E8%B5%84%E6%96%99/35_%E4%B8%80%E5%BC%A0%E5%9B%BE%E7%BB%99%E4%BD%A0%E8%AE%B2%E6%B8%85%E6%A5%9A%E7%89%88%E6%9C%AC%E7%AE%A1%E7%90%86%E5%92%8C%E7%89%88%E6%9C%AC%E6%8E%A7%E5%88%B6%E7%9A%84%E5%8C%BA%E5%88%AB%E4%BB%A5%E5%8F%8A%E5%85%B3%E7%B3%BB/%E8%B5%84%E6%96%99/05_maven%E5%92%8Cgit%E4%B9%8B%E9%97%B4%E7%9A%84%E5%85%B3%E7%B3%BB.png)
+
+### 36. 实战：如何进行版本管理
+
+版本分为snapshot版本和release版本.
+
+版本号的三位: x.x.x
+
+
+
+### 37. 实战: 站在架构师视角为项目创建统一的工程骨架
+
+
+
+### 38. mybatis源码中的pom.xml 看看都是什么意思.
 
 
 

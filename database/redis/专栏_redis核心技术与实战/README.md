@@ -213,6 +213,115 @@ MOVED 13320 172.16.19.5:6379
 
 
 
+## 10.23 周五 0.6个, 10.27 周二 2.4个
+
+### 11 | “万金油”的String，为什么不好用了？
+
+#### a. String内存消耗大:
+1. 实际数据不一定完美的装下, 比如string装id, 实际就是64byte装8byte.
+2. 还要有元数据.
+![SDS](https://static001.geekbang.org/resource/image/37/57/37c6a8d5abd65906368e7c4a6b938657.jpg)
+![RedisObject](https://static001.geekbang.org/resource/image/34/57/3409948e9d3e8aa5cd7cafb9b66c2857.jpg)
+1. buf装了实际数据
+2. len和alloc是维护的元数据, 还有包装SDS的robj的开销.
+3. redisObject包含元数据和一个指针, 各8个byte.
+
+robj保存string的三种编码:
+![string三种编码](https://static001.geekbang.org/resource/image/ce/e3/ce83d1346c9642fdbbf5ffbe701bfbe3.jpg)
+1. 保存long整数, 指针就直接变成一个整数, 不指了.
+2. 如果是字符串,小于44byte, 就把指针和SDS连接起来存储, embstr编码方式.
+3. 字符串大于44byte, 就单独放了, raw编码
+
+![hashtable的dictEntry](https://static001.geekbang.org/resource/image/a6/8a/a6708594a86d2a49107f8b6cfc1a2b8a.jpg)
+三个指针只有 24 字节, jemalloc分配内存时候会分配 32 字节: 根据申请的字节数 24, 找一个比 24 大, 但是最接近 24 的 2 的幂次数作为分配的空间.
+
+
+#### b. 用什么数据结构可以节省内存？
+![ziplist](https://static001.geekbang.org/resource/image/f6/9f/f6d4df5f7d6e80de29e2c6446b02429f.jpg)
+一系列连续的entry保存数据, 这个可以看另一个专栏.
+
+#### c. hash的二级编码保存单值
+把单值拆分成2部分, 前一部分作为hash的key, 后一部分作为value
+Hash 的存储可以用压缩列表和hash表(字典). 按照阈值选择:hash-max-ziplist-entries kv数, hash-max-ziplist-value value长度限制.
+所以利用ziplist存储的优势, 可以存储作者的例子: 
+把图片ID的前7位(1101000)作为Hash对象的key, 把图片ID的最后3位(060)和图片存储对象ID分别作为 Hash 类型值中的 key 和 value. 保证不超过1000, 使用ziplist存储.
+
+
+### 12 | 有一亿个keys要统计，应该用哪种集合？
+
+集合类型常见的四种统计模式: 包括聚合统计、排序统计、二值状态统计和基数统计
+
+#### a. 聚合统计
+多个集合取并交集等操作. 适合用set做. 可以在从库里做这种复杂计算.
+集群模式下key分布不均匀, 可能无法做聚合计算
+
+#### b. 排序统计
+比如留言排名等需要排序的场景, 适合用soreted set.
+list排序会出现分页时候又插入的问题. s_set有zrangebyscore命令. 适合分页显示和更新频繁的数据.
+
+#### c. 二值状态统计
+*Bitmap* 本身是用 String 类型作为底层数据结构实现的一种统计二值状态的数据类型
+
+#### d. 基数统计
+统计一个集合中不重复的元素个数. set: 存储原值. *HyperLogLog*: 概率统计
+
+
+![几种统计方法](https://static001.geekbang.org/resource/image/c0/6e/c0bb35d0d91a62ef4ca1bd939a9b136e.jpg)
+
+
+### 13 | GEO是什么？还可以定义新的数据类型吗？
+Redis 除了五种基本类型, 还提供了 3 种扩展数据类型，分别是 Bitmap、HyperLogLog 和 GEO.
+
+#### a.GEO底层结构
+使用Sorted_set实现, 利用了set操作, 和基于score的范围查询.
+坐标作为score, 使用GeoHash编码, 把二维进行二分, 转化一维. 前面位数相同的越多, 说明两个obj越相邻.
+
+#### b. 如何自定义数据类型？
+![redisObject](https://static001.geekbang.org/resource/image/05/af/05c2d546e507d8a863c002e2173c71af.jpg)
+RedisObject 的包括了 type,encoding,lru 和 refcount 4 个元数据，以及 1 个*ptr指针。
+![创建新数据类型](https://static001.geekbang.org/resource/image/88/99/88702464f8bc80ea11b26ab157926199.jpg)
+为新数据类型定义好它的底层结构、type 和 encoding 属性值，然后再实现新数据类型的创建、释放函数和基本命令。
+1. newtype.h 文件来保存这个新类型的定义
+2. 在server.h里面头里 RedisObject 的 type 属性中，增加这个新类型的定义 #define OBJ_STRING 0 /* String object. */
+3. object.c 里面开发新数据类型的create和delete接口. 实现新建一个 t_xxx.c 文件里
+4. 在t_xxx.c里面开发新类型的命令操作, 然后再server.h里面声明, serveri.c里面的redisCommandTable把命令string和方法关联起来
+
+
+
+
+## 10.28 周三
+
+### 14 | 如何在Redis中保存时间序列数据？
+
+#### a. 时间序列数据的读写特点
+1. 插入数据快, 复杂度要低.
+2. 查询, 单条记录, 还需要时间范围查询, 聚合查询
+所以可以基于 Hash 和 Sorted Set 实现.
+
+#### b. 基于 Hash 和 Sorted Set 保存时间序列数据
+Sorted Set 只支持范围查询，无法直接进行聚合计算
+RedisTimeSeries 这个第三方扩展可以实现.
+
+问题: zset的dict里面k-v分别是什么??? 是分数-value, 还是value-分数
+
+### 15 | 消息队列的考验：Redis有哪些解决方案？
+消息队列在存取消息时, 必须要满足三个需求, 分别是消息保序, 处理重复的消息和保证消息可靠性。
+解决方案: 
+![list的dr](https://static001.geekbang.org/resource/image/50/3d/5045395da08317b546aab7eb698d013d.jpg)
+1. 基于 List 的消息队列解决方案
+	消息顺序保证, 需要自己设计唯一ID预防重复发送, BRPOPLPUSH命令做消息ACK;
+	- 不支持多个消费者的消费组概念.
+2. 基于 Streams 的消息队列解决方案
+	模仿Kafka的消息队列, 顺序可以保证, 有自带的唯一ID
+	- 支持group
+![List和Stream作为消息队列的对比](https://static001.geekbang.org/resource/image/b2/14/b2d6581e43f573da6218e790bb8c6814.jpg)
+redis的消息队列适用于消息量并不是非常巨大, 数据不是非常重要.
+
+
+
+
+
+
 
 
 

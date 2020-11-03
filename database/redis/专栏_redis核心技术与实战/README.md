@@ -201,11 +201,14 @@ MOVED 13320 172.16.19.5:6379
 # 键对应的13320slot, 应该是172.16.19.5实例.
 ```
 ![moved重定向](https://static001.geekbang.org/resource/image/35/09/350abedefcdbc39d6a8a8f1874eb0809.jpg)
-5. 如果slot正在迁移给其他的redis中, 那么client会受到ask报错响应. 返回slot正在迁往的redis
+5. 如果slot正在迁移给其他的redis中, 那么, 没有查到的话, client会受到ask报错响应. 返回slot正在迁往的redis
 6. client会给新的redis, 发送Asking空信息, 告诉他必须接受请求了.
 7. client再发送给新的redis GET命令.
 8. 注意: ask响应不会把client的slot映射给更新, 万一迁移失败呢.
 ![ask重定向](https://static001.geekbang.org/resource/image/e9/b0/e93ae7f4edf30724d58bf68yy714eeb0.jpg)
+
+asking重定向, 这个时候是slot在**渐进式迁移**的时候: 
+
 
 问题: 如果一个表直接放key和redis的映射, 不用CRChash计算key和slot了, 为什么不可以? 空间太大了.
 
@@ -289,6 +292,9 @@ RedisObject 的包括了 type,encoding,lru 和 refcount 4 个元数据，以及 
 
 
 
+
+
+
 ## 10.28 周三
 
 ### 14 | 如何在Redis中保存时间序列数据？
@@ -303,6 +309,7 @@ Sorted Set 只支持范围查询，无法直接进行聚合计算
 RedisTimeSeries 这个第三方扩展可以实现.
 
 问题: zset的dict里面k-v分别是什么??? 是分数-value, 还是value-分数
+	应该是value, 因为如果是分数, skiplist就可以办到logn的复杂度了, 只是exist判断有没有value的时候是O(n).
 
 ### 15 | 消息队列的考验：Redis有哪些解决方案？
 消息队列在存取消息时, 必须要满足三个需求, 分别是消息保序, 处理重复的消息和保证消息可靠性。
@@ -316,6 +323,124 @@ RedisTimeSeries 这个第三方扩展可以实现.
 	- 支持group
 ![List和Stream作为消息队列的对比](https://static001.geekbang.org/resource/image/b2/14/b2d6581e43f573da6218e790bb8c6814.jpg)
 redis的消息队列适用于消息量并不是非常巨大, 数据不是非常重要.
+
+
+
+## 10.29 thursday
+
+### 16 | 异步机制：如何避免单线程模型的阻塞？
+
+影响Redis性能的五大因素:
+1. Redis的阻塞式操作
+2. CPU核和NUMA架构
+3. Redis关键系统配置
+4. Redis 内存碎片
+5. Redis buffer
+
+#### a. Redis的阻塞式操作
+![](https://static001.geekbang.org/resource/image/6c/22/6ce8abb76b3464afe1c4cb3bbe426922.jpg)
+- 客户端: 网络IO, 键值对修改
+	IO多路复用. 
+	- 复杂度高的请求会阻塞: 集合全量查询和聚合
+	- 删除大对象. 清空DB: 维护空闲内存块链表
+- 磁盘: RDB, AOF, AOF重写
+	fork子进程执行RDB, AOF重写.
+	- AOF不同的写盘策略会影响
+- 主从: 主库传输RDB, 从库清空DB, 加载RDB
+	传输和清空DB上面都说了解决和影响
+	- 加载RDB会影响
+- cluster: slot信息互相传输, 数据迁移
+	信息传递数据量不大, **渐进式数据迁移**, 但如果bigkey还会阻塞.
+	
+；bigkey ；AOF 日志同步写；从库加载 RDB 文件。
+
+#### b. 哪些阻塞点可以异步执行？
+- 集合全量查询和聚合操作: client在等着执行完毕, 不能异步. 可以scan命令分批聚合.
+- 加载RDB: 必须加载完数据才能工作, 不能异步.
+- bigkey删除, 清空数据库: 子线程异步删除.
+- AOF: 子线程来执行 AOF 日志的同步写.
+
+#### c. 异步的子线程机制
+![redis异步线程执行任务队列](https://static001.geekbang.org/resource/image/ae/69/ae004728bfe6d3771c7424e4161e7969.jpg)
+- Redis 主线程启动后，会使用操作系统提供的 pthread_create 函数创建 3 个子线程
+- bigkey删除和DB清空一般是同步的,lazy-free需要手动开启, 异步化需要用"UNLINK"和"FLUSH ASYNC"命令: redis4.0之前的可以scan查到一部分然后删掉.
+	Hash/Set/ZSet/List在集合元素数量多的时候才会lazy-free
+
+
+
+### 17 | 为什么CPU结构也会影响Redis的性能？
+#### a. 主流的 CPU 架构
+![](https://static001.geekbang.org/resource/image/d9/09/d9689a38cbe67c3008d8ba99663c2f09.jpg)
+![服务器的多CPU socket架构](https://static001.geekbang.org/resource/image/5c/3d/5ceb2ab6f61c064284c8f8811431bc3d.jpg)
+Redis 单线程可以先在 Socket 1 上运行一段时间，然后再被调度到 Socket 2 上运行. 这就会丧失三级缓存的优势. L1,L2尤快
+多CPU架构下, 切换CPU执行, 就是非统一内存访问架构（Non-Uniform Memory Access，NUMA 架构)
+
+#### b. CPU多核对Redis性能影响
+在一个 CPU 核上运行时，应用程序需要记录自身使用的软硬件资源信息（例如栈指针、CPU 核的寄存器值等），我们把这些信息称为运行时信息。同时，应用程序访问最频繁的指令和数据还会被缓存到 L1、L2 缓存上，以便提升执行速度。
+但是，在多核 CPU 的场景下，一旦应用程序需要在一个新的 CPU 核上运行，那么，运行时信息就需要重新加载到新的 CPU 核上。而且，新的 CPU 核的 L1、L2 缓存也需要重新加载数据和指令，这会导致程序的运行时间增加。
+context switch 是指线程的上下文切换: 太多就会L1,L2缓存重刷.
+
+taskset 命令把一个程序绑定在一个核上运行。
+![](https://static001.geekbang.org/resource/image/30/b0/30cd42yy86debc0eb6e7c5b069533ab0.jpg)
+![](https://static001.geekbang.org/resource/image/41/79/41f02b2afb08ec54249680e8cac30179.jpg)
+把网络中断程序和 Redis 实例绑在同一个 CPU Socket, 可以避免 Redis 跨 CPU Socket 访问网络数据.
+
+TODO: ...
+
+
+## 10.30 Friday (0), 11.2 Monday (2)
+
+### 18 | 波动的响应延迟：如何应对变慢的Redis？（上）
+除了上面两讲里面Redis变慢的因素, 还有一些其它因素. 这两节讲如何应对Redis.
+
+#### a. redis是不是真的变慢了
+- redis延迟. `./redis-cli –intrinsic-latency 10`, 命令查看10秒内的最大延迟.
+- 平时无压力的延迟可以作为Redis的基线性能. 如果运行延迟2倍基线性能的时候压力就大了.
+#### b. 如何应对 Redis 变慢？
+![Redis 架构图](https://static001.geekbang.org/resource/image/cd/06/cd026801924e197f5c79828c368cd706.jpg)
+红色的三块就是影响Redis性能的部分.
+
+#### c. Redis 自身操作特性的影响
+1. 慢查询: latency monitor工具, 找到慢查询. 确认复杂度是不是慢查询. 修改.
+2. 过期key操作:
+	检查业务代码在使用 EXPIREAT 命令设置 key的过期时间是不是一样的.
+
+问题: KEYS和scan命令; scan命令会不会因为rehash丢数据?
+	不会, hash扩容, 使用高位进位法进行遍历, 不会漏. hash缩容: 可能会映射到新hash上没有遍历到的位置, 会重复. 
+
+#### d. 文件系统：AOF 模式
+![](https://static001.geekbang.org/resource/image/9f/a4/9f1316094001ca64c8dfca37c2c49ea4.jpg)
+evrysec模式下如果上一次的fsync没有完成, 会阻塞主线程. 如果阻塞了要适当调整级别, 使用固态硬盘.
+![](https://static001.geekbang.org/resource/image/2a/a6/2a47b3f6fd7beaf466a675777ebd28a6.jpg)
+
+#### e. 操作系统：swap
+内存 swap 是操作系统里将内存数据在内存和磁盘间来回换入和换出的机制，涉及到磁盘的读写; 
+一旦Swap触发, redis的内存操作, 要等到磁盘数据读写完成.
+*物理内存不足就会触发Swap:* 检查redis进程/其他进程
+可以在/proc目录下查看每个进程的swap内存
+#### f. 操作系统：内存大页
+Linux 内核从 2.6.38 开始支持内存大页机制, 支持 2MB 大小的内存页分配，而常规的内存页分配是按 4KB 的粒度来执行的。
+- redis在AOF重写/RDB时候fork是写时复制, 复制2MB太慢了.
+- 关闭内存大页
+
+#### g. CheckList.
+	获取 Redis 实例在当前环境下的基线性能。
+	是否用了慢查询命令？如果是的话，就使用其他命令替代慢查询命令，或者把聚合计算命令放在客户端做。
+	是否对过期 key 设置了相同的过期时间？对于批量删除的 key，可以在每个 key 的过期时间上加一个随机数，避免同时删除。
+	是否存在 bigkey？ 对于 bigkey 的删除操作，如果你的 Redis 是 4.0 及以上的版本，可以直接利用异步线程机制减少主线程阻塞；如果是 Redis 4.0 以前的版本，可以使用 SCAN 命令迭代删除；对于 bigkey 的集合查询和聚合操作，可以使用 SCAN 命令在客户端完成。
+	Redis AOF 配置级别是什么？业务层面是否的确需要这一可靠性级别？如果我们需要高性能，同时也允许数据丢失，可以将配置项 no-appendfsync-on-rewrite 设置为 yes，避免 AOF 重写和 fsync 竞争磁盘 IO 资源，导致 Redis 延迟增加。当然， 如果既需要高性能又需要高可靠性，最好使用高速固态盘作为 AOF 日志的写入盘。
+	Redis 实例的内存使用是否过大？发生 swap 了吗？如果是的话，就增加机器内存，或者是使用 Redis 集群，分摊单机 Redis 的键值对数量和内存压力。同时，要避免出现 Redis 和其他内存需求大的应用共享机器的情况。
+	在 Redis 实例的运行环境中，是否启用了透明大页机制？如果是的话，直接关闭内存大页机制就行了。
+	是否运行了 Redis 主从集群？如果是的话，把主库实例的数据量大小控制在 2~4GB，以免主从复制时，从库因加载大的 RDB 文件而阻塞。
+	是否使用了多核 CPU 或 NUMA 架构的机器运行 Redis 实例？使用多核 CPU 时，可以给 Redis 实例绑定物理核；使用 NUMA 架构时，注意把 Redis 实例和网络中断处理程序运行在同一个 CPU Socket 上。
+
+
+
+
+
+### 20 | 删除数据后，为什么内存占用率还是很高？
+
+
 
 
 

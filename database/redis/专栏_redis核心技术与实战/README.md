@@ -437,8 +437,103 @@ Linux 内核从 2.6.38 开始支持内存大页机制, 支持 2MB 大小的内�
 
 
 
+## 11.10
 
 ### 20 | 删除数据后，为什么内存占用率还是很高？
+
+当数据删除后, Redis释放的内存空间会由内存分配器管理, 并不会立即返回给操作系统. 操作系统仍然会记录着 Redis 分配了大量内存
+风险点：Redis 释放的内存空间可能并不是连续的, 这些不连续的内存空间很有可能处于一种闲置的状态.
+
+#### a. 什么是内存碎片？
+![例子](https://static001.geekbang.org/resource/image/23/df/23ebc99ff968f2c7edd0f8ddf7def8df.jpg)
+分散的空间就是碎片.
+
+#### b. 内存碎片产生内因: 内存分配器的分配策略
+内存分配器一般是按固定大小来分配内存，而不是完全按照应用程序申请的内存空间大小给程序分配
+jemalloc按照2^n字节分配.
+
+#### c. 外因：键值对大小不一样和删改操作
+![](https://static001.geekbang.org/resource/image/46/a5/46d93f2ef50a7f6f91812d0c21ebd6a5.jpg)
+
+
+#### d. INFO 命令查看内存碎片
+mem_fragmentation_ratio 内存碎片比例, =used_memory_rss/ used_memory, 分配的空间和使用的比率.
+如果比率大于1.5, 说明使用率低于67%.
+
+#### e. 如何清理内存碎片
+1. 重启Redis
+2. `config set activedefrag yes` 配置redis自动内存碎片清理, 主线程操作.
+	active-defrag-ignore-bytes
+	active-defrag-threshold-lower 两个必要限制条件打倒后就会清理
+	还有2个参数限制内存清理的CPU使用.
+
+问题: 如果mem_fragmentation_ratio<1, 说明Redis的物理内存要小于总内存, 一部分数据在Swap中.
+
+
+
+## 11.11: 10日看了30%的21.
+
+### 21 | 缓冲区：一个可能引发“惨案”的地方
+主从同步的时候需要用缓冲区, 接收client命令的时候需要Buffer
+
+#### a. 客户端输入和输出缓冲区
+输入缓冲区把client的请求命令存期来, 输出buffer把数据缓存起来.
+![输入输出buffer](https://static001.geekbang.org/resource/image/b8/e4/b86be61e91bd7ca207989c220991fce4.jpg)
+buffer溢出场景:
+1. big key
+2. 处理阻塞, 请求buffer溢出.
+
+#### b. 如何应对输入缓冲区溢出？
+- 使用`CLIENT LIST`命令查看buffer使用情况
+	qbuf, qbuf-free 使用和未用的queryBuffer
+	当多个客户端连接占用的内存总量，超过了 Redis 的 maxmemory 配置项时（例如 4GB），就会触发 Redis 进行数据淘汰
+- 解决角度: 大buffer, 加快数据命令的发送和处理速度
+- 大buffer: redis中代碼设定输入buffer1GB, 不能设置.
+
+#### c. 如何应对输出缓冲区溢出？
+Redis的响应: 一个大小为 16KB 的固定缓冲空间, 用来暂存 OK 响应和出错信息; 另一部分动态增加的缓冲空间, 用来暂存大小可变的响应结果.
+- output buffer溢出场景: 
+	响应bigkey; 
+	执行MONITOR命令: 会持续相应Redis的监控, 不用再生产; 
+	缓冲区大小设置得不合理: `client-output-buffer-limit` 设置buffer的上限, 持续写入数据的数量和时间上限.
+		缓冲区有3种: 用户client和订阅channel的subClient, 主从同步buffer
+		normal参数配置普通客户端. 通常对buffer上线, 持续写入量和持续写入时间不限制
+		pubsub参数, 可以设置8M的缓冲大小, 60s 2m的流量限制: `client-output-buffer-limit pubsub 8mb 2mb 60`
+		slave参数, 可以设置全量复制buffer的大小.
+		
+#### d. 主从集群Buffer
+全量复制和增量复制两个buffer: 全量复制每个slave一个, 增量复制是一个环形链表. 不同于TCP的读写缓冲区.
+1. replication buffer: 全量复制
+	![](https://static001.geekbang.org/resource/image/a3/7a/a39cd9a9f62c547e2069e6977239de7a.jpg)
+	master为每个slave准备一个复制缓冲区(本质是client的outputBuffer), 在RDB文件传输过程的写命令放进去, RDB传输完成后, slave接收复制缓冲区的数据.
+	如果RDB传输慢, 那么复制缓冲区容易溢出. 溢出后关闭连接, 复制失败.
+	- 如何避免: 控制RDB的大小, 尽量使用Cluster. 配置`client-output-buffer-limit`,
+		master上复制缓冲区的内存开销是每个从节点客户端输出缓冲区占用内存的总和. 大主从Redis会有压力.
+2. repl_backlog_buffer: 增量复制
+	![](https://static001.geekbang.org/resource/image/ae/8f/aedc9b41b31860e283c5d140bdb3318f.jpg)
+	master把写命令同步给slave, 同时把命令写入复制挤压缓冲区, 一旦节点失联, 重连后就从复制挤压缓冲区拿到未接收的数据.
+	问题:??????????????写命令同步给slave, 是用的复制缓冲区么?还是直接发给slave的? 用的是长连接 直接发送的, 放在TCP缓冲区, 内核负责TCP发送.
+	
+
+### 期中测试题 | 一套习题，测出你的掌握程度
+选择题60分
+1. Redis 在接收多个网络客户端发送的请求操作时，如果有一个客户端和 Redis 的网络连接断开了，Redis 会一直等待该客户端恢复连接吗？为什么？
+
+
+
+## 11.12
+
+### 23 | 旁路缓存：Redis是如何工作的？
+
+
+
+
+
+
+
+
+
+
 
 
 

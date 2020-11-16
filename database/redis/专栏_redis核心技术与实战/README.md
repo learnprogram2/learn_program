@@ -521,16 +521,138 @@ Redis的响应: 一个大小为 16KB 的固定缓冲空间, 用来暂存 OK 响�
 
 
 
-## 11.12
+## 11.12 0, 11.16
 
 ### 23 | 旁路缓存：Redis是如何工作的？
 
+#### a. 缓存的特征
+系统里不同层之间的访问速度不同, 所以需要缓存加速.
+1. 缓存是一个快速子系统
+- CPU 里面的末级缓存LLC, 用来缓存内存中的数据, 避免每次从内存中存取数据;
+- 内存中的高速页缓存 page cache, 用来缓存磁盘中的数据, 避免每次从磁盘中存取数据.
+2. 缓存的容量小于慢速系统, 不能缓存所有的.
+
+#### b. Redis 缓存处理请求的两种情况
+- 缓存命中: 直接读取redis
+- 缓存缺失: 需要从数据库中把数据写入redis, 更新缓存.
+![缓存处理请求的两种情况](https://static001.geekbang.org/resource/image/6b/3d/6b0b489ec0c1c5049c8df84d77fa243d.jpg)
+
+#### c. Redis 作为旁路缓存
+旁路缓存: redis是一个独立的数据库系统, 在application中做各种CRUD操作. 
+
+#### d. 缓存类型: 
+1. 只读缓存: 最新数据在DB中
+![](https://static001.geekbang.org/resource/image/46/cd/464ea24a098c87b9d292cf61a2b2fecd.jpg)
+应用: 修改不多的查看缓存.
+2. 读写缓存: 最新数据在redis中
+更新的时候, 都在redis中, 同步/异步写回.
+![](https://static001.geekbang.org/resource/image/00/66/009d055bb91d42c28b9316c649f87f66.jpg)
+应用: 抢购扣库存.
+3. 两种缓存的区别:
+只读缓存: 读不到就算了, 确保DB中数据为准, 修改DB然后干掉redis.优先保证了数据一致性.
+读写缓存: 速度优先. 但会出现缓存和数据库共同修改的数据不一致.
+消息队列同步可做到最终一致性.
+
+
+### 24 | 替换策略：缓存满了怎么办: 缓存数据的淘汰机制
+
+#### a. 缓存大小设置:
+20%的数据不一定能贡献80%的访问量, 不能简单地按照"总数据量的20%"设置缓存最大空间容量. 应该在0.15-0.3之间动态调整.
+`CONFIG SET maxmemory 4gb` 设置redis大小.
+
+#### b. redis缓存淘汰策略
+4.0由6种增加到8中:
+![8种淘汰策略分类](https://static001.geekbang.org/resource/image/04/f6/04bdd13b760016ec3b30f4b02e133df6.jpg)
+1. 优先使用`allkeys-lru`策略: 利用LRU剔除冷数据
+LFU是基于访问频次的模式，而LRU是基于访问时间的模式。
+
+#### c. 如何处理被淘汰的数据？
+redis没有处理, 直接删, 需要我们再修改数据时候把脏数据刷回DB, 也就是读写缓存至少要做到.
 
 
 
+### 25 | 缓存异常（上）：如何解决缓存和数据库的数据不一致问题？
+
+#### a. 缓存和数据库的数据不一致是如何发生的？
+redis是旁路缓存, DB和redis的修改不能原子化.
+
+#### b. 如何解决数据不一致问题？
+1. 重试机制: 利用消息队列, 没有成功update的丢进消息队列里.
+情况一：先删除缓存，再更新数据库: ![](https://static001.geekbang.org/resource/image/85/12/857c2b5449d9a04de6fe93yy1e355c12.jpg)
+解决: 更新完数据库后, sleep一会再删一次缓存. *延迟双删* 确保DB中数据为准
+情况二：先更新数据库值，再删除缓存值: ![](https://static001.geekbang.org/resource/image/a1/0b/a1c66ee114yyc9f37f2a35f21b46010b.jpg)
+问题较小, 只是会造成一小段时间内的数据不一致. 
+
+2. 总结: 
+数据库/redis fail的问题, 采用重试.
+redis和db之间的并发问题: 采用延迟双删 或者 先DB再redis.
+![问题归总](https://static001.geekbang.org/resource/image/11/6f/11ae5e620c63de76448bc658fe6a496f.jpg)
+
+3. 问题: redis修改的时候, 不是删除而是修改会有什么问题: 会把只读缓存变成了读写缓存, redis和DB的数据不一致问题凸显, 可能会丢数据. 而只读不会丢DB的新数据.
+
+#### c. 抢购问题不能修改DB的情况呢??????????
+
+
+### 26 | 缓存异常（下）：如何解决缓存雪崩、击穿、穿透难题？
+
+#### a. 缓存雪崩
+雪崩是缓存不能被请求命中了: 
+![](https://static001.geekbang.org/resource/image/74/2e/74bb1aa4b2213e3ff29e2ee701e8f72e.jpg)
+![服务降级](https://static001.geekbang.org/resource/image/4a/a8/4ab3be5ba24cf172879e6b2cff649ca8.jpg)
+1 大量数据同时过期:
+	- 失效时间不要相同
+	- 服务降级: 雪崩时候非核心数据可以不要查库, 返回Null, 只放过核心数据.
+![服务熔断](https://static001.geekbang.org/resource/image/17/b5/17d39f6233c3332161c588b42eccaeb5.jpg)
+![请求限流](https://static001.geekbang.org/resource/image/d5/54/d5a0928e1d97cae2f4a4fb5b93e5c854.jpg)
+2. redis 宕机:
+	- 服务熔断: 暂停对缓存接口的访问, 直接是null.
+	- 限流
+	- 构建高可用redis cluster
+
+#### b. 缓存击穿
+具体的某个热点数据, 缓存拦不住请求, 都打到DB了.
+![缓存击穿](https://static001.geekbang.org/resource/image/d4/4b/d4c77da4yy7d6e34aca460642923ab4b.jpg)
+- 热点数据不设置过期时间
+
+
+#### c. 缓存穿透: 
+redis&DB都没有数据, 每次都要两个都访问一遍.
+![缓存穿透](https://static001.geekbang.org/resource/image/46/2e/46c49dd155665579c5204a66da8ffc2e.jpg)
+1. 误删除DB数据:
+2. 恶意攻击:
+3. 解决方法: 
+	- 缓存缺省值, 拦截住下次request
+	- 布隆过滤器快速判断数据是否存在, 校验后再查DB: 写入DB/查为null时候标记, 下次就用来判断.
+	- 前端接口请求校验.
+	
+总结: ![总结](https://static001.geekbang.org/resource/image/b5/e1/b5bd931239be18bef24b2ef36c70e9e1.jpg)
+尽量预防: 不设置相同过期时间, 热点数据不要设置过期时间, 增强请求校验, 缓存缺省值.
+
+
+问题: 应对雪崩的限流熔断可以用在穿透上么? 不可以, 雪崩是DB压力大, 但DB有数据, 穿透即使访问DB也没数据, 要拦住请求.
 
 
 
+### 27 | 缓存被污染了，该怎么办？
+无用的数据进入缓存, 就会污染缓存.
+
+#### a. 如何解决缓存污染问题？
+1. volatile-random 和 allkeys-random: 随机删除, 没用.
+2. volatile-ttl: 剩余存活时间长短不能完全代表缓存数据能不能接着用, 不太好.
+3. LRU: 只看访问时间, 所以扫描时的查询时候, 无效.
+4. LFU: least-frequency-use: 最小使用频率的算法: 根据访问次数链表, 访问次数相同根据LRU时间.
+
+- **LRU实现策略**: 两个近似方法
+	1. redisObj中由LRU字段记录时间戳
+	2. 不维护全局链表, 随机采样, 根据LRU字段进行筛选, 统计意义上的相似.
+	
+- **LFU实现策略**: 24bite的lru字段拆分成两个部分
+	- 前16bit: 接着存储ldt接着存储访问时间戳
+	- 后8bit: counter, 计数访问次数.
+	使用LFU策略时候, 根据lru字段的后八位比较次数, 然后相同再比较时间.
+	TODO counter ++的规则
+	
+	
 
 
 

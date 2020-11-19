@@ -726,6 +726,49 @@ Redlock:
 MULTI开启事务, EXEC执行事务, discard是主动放弃事务.
 如果事务执行出错, 还会继续执行所有其他的命令.
 
+原子性: 事务执行出错接着执行其他的命令, 不具有原子性. 
+一致性: slave-master同步, 可以保证最终一致的.
+隔离性: 可以保证lua脚本里面的内容, 输入exec之后的隔离性. 之间的可以用watch然后自己去处理.
+持久性: 不能, 即使AOF的always, 写后日志没有同步给slave宕机也没有了.
+
+
+问题: 执行事务时，如果 Redis 实例发生故障，而 Redis 使用了 RDB 机制，那么，事务的原子性还能得到保证吗:
+能, 因为RDB也是主线程在做, 主线程做lua的时候顾不上RDB
+
+建议: pipeline结合事务使用, 可以保证隔离性.
+
+
+
+### 32 | Redis主从同步与故障切换，有哪些坑？
+
+问题: 主从数据不一致、读到过期数据，以及配置项设置得不合理从而导致服务挂掉
+
+#### a. 主从数据不一致
+主写从读 会有不一致. 
+- 网络硬件条件要好
+- 监控主从复制进度:master_repl_offset, slave_repl_offset.
+
+
+#### b. 读到过期数据
+redis惰性删除/定期删除不能保证把所有的过期数据都马上干掉, slave只接受同步命令不会删数据.
+3.2版本的slave开始对过期数据返回空.
+- 主从同步有延迟, 对于EXPIRE 和 PEXPIRE命令, 执行命令开始计算存活时间, 会使得slave的数据死的晚.
+- **使用EXPIREAT 和 PEXPIREAT设置具体时间点.**
+
+
+#### c. 不合理配置项导致的服务挂掉
+
+1. protected-mode: 限制redis能不能被localhost之外的ip访问.
+	yes的时候 redis的哨兵模式没有办法交流了.
+
+2. cluster-node-timeout: cluster中实例心跳响应超时时间. 调大点, 半数以上的实例正常cluster才正常. 在半数以上的主从切换就可能会挂.
+
+![汇总](https://static001.geekbang.org/resource/image/9f/93/9fb7a033987c7b5edc661f4de58ef093.jpg)
+
+
+
+
+
 
 
 

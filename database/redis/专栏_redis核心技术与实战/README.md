@@ -656,8 +656,8 @@ redis&DB都没有数据, 每次都要两个都访问一遍.
 #### b. 最合适的策略:
 使用volatile-lfu干掉过期时间的key.
 	
-问题: 使用了 LFU 策略后, 缓存还会被污染吗? ????????????????????////////
-被污染的概率取决于LFU的配置，也就是lfu-log-factor和lfu-decay-time参
+问题: 使用了 LFU 策略后, 缓存还会被污染吗? 
+被污染的概率取决于LFU的配置，也就是lfu-log-factor和lfu-decay-time参数, 如果短期增加很快, 衰减很慢.
 
 
 
@@ -770,17 +770,74 @@ redis惰性删除/定期删除不能保证把所有的过期数据都马上干�
 
 
 
+## 11/20
+
+### 33 | 主从切换脑裂：一次奇怪的数据丢失
+
+#### a. 为什么会发生脑裂？
+1. 判断脑裂:
+在排查客户端的操作日志时, 在主从切换后有客户端仍在和原主库通信, 并没有到新主库. 
+2. 判断脑裂过程, 为什么丢失数据:
+在切换过程中, 客户端仍与原主库通信, 说明原主库没有真的发生故障. 猜测主库没有响应哨兵的心跳, 被哨兵错误地判断为客观下线的.
+原因: 数据采集导致redis CPU利用率突高.
+脑裂产生问题的本质原因是，Redis 主从集群内部没有通过共识算法，来维护多个节点数据的强一致性。它不像 Zookeeper 那样，每次写请求必须大多数节点写成功后才认为成功
+
+#### b. 为什么脑裂会导致数据丢失？
+脑裂的时候 sentinel会向所有他认为的slave发送slaveof命令, 然后原master会接受新主库的RDB, 清空自己的数据, 造成了client在旧主写入的都丢了.
+
+#### c. 如何应对脑裂问题？
+因为redis响应慢client没有放弃它, 导致了缓过来还写. 
+可以配置: min-slaves-to-write, min-slaves-max-lag 确保client写入的保证slave及时接收, 如果master处理不了就会被限制client访问, 也就不接受client的请求了.
+流程说明: 假设我们将 min-slaves-to-write 设置为 1，把 min-slaves-max-lag 设置为 12s，把哨兵的 down-after-milliseconds 设置为 10s，主库因为某些原因卡住了 15s，导致哨兵判断主库客观下线，开始进行主从切换。同时，因为原主库卡住了 15s，没有一个从库能和原主库在 12s 内进行数据复制，原主库也无法接收客户端请求了
+
+https://online.visual-paradigm.com/w/tfrzbozw/app/diagrams/#diagram:workspace=tfrzbozw&proj=0&id=4
 
 
 
 
 
+## 11/26
 
+### 35 | Codis VS Redis Cluster：我该选择哪一个集群方案？
+对于一个分布式系统来说，它的可靠性和系统中的组件个数有关, 和 Redis Cluster 只包含 Redis 实例不一样，Codis 集群包含的组件有 4 类.
 
+#### a. Codis 的整体架构和基本流程
+- codis server： Redis 实例, 增加了额外的数据结构, 支持数据迁移操作
+- codis proxy： 接收转发请求到 codis server。
+- Zookeeper 集群： 保存集群元数据, 例如数据位置信息和 codis proxy 信息.
+- codis dashboard 和 codis fe: 共同组成了集群管理工具. dashboard 负责执行集群管理工作, 增删 codis server,codis proxy 和进行数据迁移. fe 负责提供 dashboard 的 Web.
+![Codis 的整体架构](https://static001.geekbang.org/resource/image/c7/a5/c726e3c5477558fa1dba13c6ae8a77a5.jpg)
 
+#### b. 关键问题: 数据如何在集群里分布？
+也是通过slot映射完成codis-server和数据的存放的
+1. 一共1024个slot [0,1, ..., 1023]. 每个server 上都有. 
+2. 对key使用CRC32计算hash值. 客户端计算.
+![](https://static001.geekbang.org/resource/image/d1/b1/d1a53f8b23d410f320ef145fd47c97b1.jpg)
 
+#### c. 集群扩容和数据迁移如何进行?
+启动新的 codis server 将它加入集群, 然后把部分slot数据迁移给它.
+slot迁移是单个key, source server设置成只读数据然后开始, 有同步模式和异步非阻塞的. 
+![slot迁移过程](https://static001.geekbang.org/resource/image/e0/6b/e01c7806b51b196097c393a079436d6b.jpg)
+`SLOTSMGRTTAGSLOT-ASYNC numkeys`设置每次迁移的key数量.
 
+增加 proxy 比较容易，我们直接启动 proxy，再通过 codis dashboard 把 proxy 加入集群就行。
+![增加proxy](https://static001.geekbang.org/resource/image/70/23/707767936a6fb2d7686c84d81c048423.jpg)
 
+#### d. 通讯协议:  RESP
+使用 Redis 单实例时，客户端只要符合 RESP 协议，就可以和实例进行交互和读写数据。
+
+#### e. 怎么保证集群可靠性？
+codis-server可以用主从.
+codis proxy 使用 Zookeeper 集群保存路由表.
+codis dashboard 和 codis fe 来说，它们主要提供配置管理和管理员手工操作
+![](https://static001.geekbang.org/resource/image/02/4a/0282beb10f5c42c1f12c89afbe03af4a.jpg)
+
+#### f. 切片集群方案选择建议
+![codis-vs-cluster](https://static001.geekbang.org/resource/image/8f/b8/8fec8c2f76e32647d055ae6ed8cfbab8.jpg)
+*从数据迁移性能维度来看，Codis 能支持异步迁移*
+
+问题: 假设 Codis 集群中保存的 80% 的键值对都是Hash,每个Hash集合的元素10万~20万个, 单个元素2KB. 迁移会对Codis的性能造成影响吗?
+答: 异步情况下不会吧, 每个只有2k, source发送出去就是放key.
 
 
 

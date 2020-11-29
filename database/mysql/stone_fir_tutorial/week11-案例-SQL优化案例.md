@@ -82,6 +82,36 @@ SQL: `select * from products where category='xx' and sub_category='xxx' order by
 
 
 
+### 116-117. 使用profiling排查千万级数据删除导致的慢查询
+
+**情况:** 对同一个表的单行查询的慢SQL出现, 排除了MySQL服务器整体负载过高. 如果所有SQL不加区分的慢, 那么应该去排除CPU/网络IO/磁盘IO负载.
+
+**通常排查分两头:** 通过执行计划检查SQL是否有问题, 检查MySQL服务器负载
+
+**第三种排查: 使用MySQL profilling分析SQL执行过程和耗时**
+
+1. Sending-Data耗时高
+
+```java
+// 1. 在MySQL上开启profiling参数
+root@localhost : (none) 10:53:11> set profiling=1;
+// 2. 执行SQL
+// 3. show profiles 命令展示sql执行情况. 看各种耗时.
+// 4. 发现 Sending-Data耗时最高
+```
+
+2. `show engine innodb status` 发现`history list length`指标过高, 这说明有大量事务并发执行, undo多版本快照链条很长.
+
+**最终原因:** 发现定时任务在跑: 开启事务, 事务内删除上千万数据. 导致其他事物查询的时候按照read view判定原则扫描到已经删除, 会在历史版本链中找到自己能看到的版本. 
+
+[文章链接🔗](https://apppukyptrl1086.pc.xiaoe-tech.com/detail/i_5f5eb2aae4b0d59c87b5940c/1?from=p_5e0c2a35dbbc9_MNDGDYba&type=6)
+
+**同学案例:** 有个错误消息日志表, 接收MQ消费失败的数据, 后台定时重试. 数据库总是晚上就每隔一小时出现一个链接异常(数据库分片分库的，dbproxy与底层库出现链接异常), 时间集中, 所以是定时任务的问题. 原因: 表内数据量达到了百万级, 定时任务一个大事务, 更新几十万条消息, 每条消息需要调用第三方服务10s, 所以事务更长. 分页语句也有问题, 每次都要回表.导致MySQL压力太大与dbproxy断开. 解决: 事务缩小到每一条, 分页查询不要回表.
+
+
+
+
+
 
 
 

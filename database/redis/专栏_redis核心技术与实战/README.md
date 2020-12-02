@@ -874,6 +874,138 @@ codis dashboard 和 codis fe 来说，它们主要提供配置管理和管理员
 
 
 
+## 12/01
+
+
+### 37 | 数据分布优化：如何应对数据倾斜？
+
+- 切片集群中，数据会按照一定的分布规则分散到不同的实例上保存. 数据倾斜有两种
+	- 数据量倾斜
+	- 数据访问倾斜
+
+#### a. 数据量倾斜的成因和应对方法
+- bigkey 导致倾斜: 要尽量避免把过多的数据保存在同一个键值对中
+- slot 分配不均: `CLUSTER SLOTS`命令查看slot分配情况. `CLUSTER setslot`分配slot.
+	手动的从source实例上拿slot里面的key, migrate到新的实例里:
+	`MIGRATE 192.168.10.5 6379 "" 0 timeout KEYS key1 key2 key3`
+- hash tag: hash-tag是对key指定用来hash的部分: user:profile:{3231} 3231是要做hash的部分.
+	hash-tag一般用在cluster想要把数据放到同一个实例上.
+	这种数据倾斜不好做. 要结合数据考虑.
+	
+#### b. 数据访问倾斜的成因和应对方法
+
+原因: 实例上存在热点数据
+解决: 只读的热点数据, 可以多副本, 分散请求.
+
+![数据倾斜原因和解决方法](https://static001.geekbang.org/resource/image/09/6f/092da1ee7425d20b1af4900ec8e9926f.jpg)
+
+问题: 如果 热点数据过期, 会怎样?
+数据库会爆炸. 发生了缓存击穿
+
+
+
+
+### 38 | 通信开销：限制Redis Cluster规模的关键因素
+
+Redis 官方给出了 Redis Cluster 的规模上限，就是一个集群运行 1000 个实例, 因为实例之间的通讯开销越来越大, 吞吐量会下降.
+
+#### a. 实例通信方法和对集群规模的影响
+实例之间Goossip协议通讯. 
+![通讯](https://static001.geekbang.org/resource/image/5e/86/5eacfc36c4233ae7c99f80b1511yyb86.jpg)
+Gossip通讯协议开销有: 消息大小, 通讯频率.
+
+#### b. Gossip 消息大小 每个data 104byte
+```c
+typedef struct { 
+	char nodename[CLUSTER_NAMELEN]; //40字节 
+	uint32_t ping_sent; //4字节 
+	uint32_t pong_received; //4字节 
+	char ip[NET_IP_STR_LEN]; //46字节 
+	uint16_t port; //2字节 
+	uint16_t cport; //2字节 
+	uint16_t flags; //2字节 
+	uint32_t notused1; //4字节
+} clusterMsgDataGossip;
+```
+- 每次Gossip消息, 会发送自身的data, 还有集群十分之一的实例的信息;
+- 还会包括bitmap, 这是2kb 16384个bit位标记自己的slot.
+ 1000个实例的集群PING包含101个实例的状态信息, 104*101字节+2kb = 12KB, 来回24kb.
+
+#### c. 实例间通信频率
+每秒从实例列表跳出5个实例, 选出1个最就没通讯的发送PING消息.
+每100ms检查没有接收PONG消息的实例时间超过timeout, 就会发送PING
+计算: 如果100ms检查出1个, 然后每秒发送1个, 那么每秒发送11个, 1000集群里面12*11*2=288kb/s.
+
+#### d. 如何降低实例间的通信开销？
+避免过多的心跳消息挤占集群带宽, 我们可以调大cluster-node-timeout值, 从10s调大到20-25s.
+
+使用tcpdump抓包: `tcpdump host 192.168.10.3 port 16379 -i 网卡名 -w /tmp/r1.cap`
+
+问题: 把slot分配信息和实力状态信息放在zk上, 会对集群规模有什么影响:
+集群规模可以扩大. 每次部分拉取数据. 集群内单个实例的通信开销, 不会随着实例的增加而增长太多.
+
+
+
+## 12/02
+
+### 39 | Redis 6.0的新特性：多线程、客户端缓存与安全
+
+#### a. 从单线程处理网络请求到多线程处理
+redis后台线程和子进程负责(数据惰性删除, DBA生成, AOF重写), 其他的从网络IO处理到读写命令处理都是单线程. 
+- 用户态网络协议栈(例如 DPDK)取代内核网络协议栈可以加快IO, 网络请求的处理不用在内核里执行, 直接在用户态完成处理.
+- IO多线程
+
+![IO处理流程](https://static001.geekbang.org/resource/image/58/cd/5817b7e2085e7c00e63534a07c4182cd.jpg)
+![IO写回流程](https://static001.geekbang.org/resource/image/2e/1b/2e1f3a5bafc43880e935aaa4796d131b.jpg)
+
+1. 设置 io-thread-do-reads 配置项为 yes，表示启用多线程. 配置线程个数: `io-threads 6` 小于CPU个数
+
+#### b. 实现服务端协助的客户端缓存
+Tracking 功能实现了两种模式解决server更新通知client: 需要client开启RESP3协议
+1. 普通模式: redis向client发送invalidate消息: `CLIENT TRACKING ON|OFF` 开启
+2. 广播模式: redis向client广播所有key失效情况. client注册跟踪消息key前缀: `CLIENT TRACKING ON BCAST PREFIX prefixxxx` 开启
+
+#### c. 从简单的基于密码访问到细粒度的权限控制
+
+#### d. 启用 RESP 3 协议
+
+![redis6.0特性](https://static001.geekbang.org/resource/image/21/f0/2155c01bf3129d5d58fcb98aefd402f0.jpg)
+
+
+
+### 40 | Redis的下一步：基于NVM内存的实践
+非易失存储(Non-Volatile Memory, NVM): 能持久化保存数据, 读写速度和DRAM接近, 容量大.
+
+在 Memory 模式时，Redis 可以利用 NVM 容量大的特点，实现大容量实例，保存更多数据。在使用 App Direct 模式时，Redis 可以直接在持久化内存上进行数据读写，在这种情况下，Redis 不用再使用 RDB 或 AOF 文件了，数据在机器掉电后也不会丢失。
+
+
+
+### 41 | 常见问题答疑
+
+redis与Memcache对比:
+![](https://static001.geekbang.org/resource/image/9e/29/9eb06cfea8a3ec6fced6e736e4e9ec29.jpg)
+redis与rocksDB对比: 
+![](https://static001.geekbang.org/resource/image/7c/82/7c0a225636f4983cb56a5b7265cf5982.jpg)
+
+????? TODO 一致性hash算法是什么
+
+
+### 期末测试 | 知识点:
+
+
+### 
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

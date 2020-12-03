@@ -990,11 +990,17 @@ redis与rocksDB对比:
 ????? TODO 一致性hash算法是什么
 
 
-### 期末测试 | 知识点:
+### 期末测试 | 知识点: TODO
 
 
 ### 
 
+
+
+## 12/03 加餐
+
+### 用户Kaito的学习分享
+![学习路径](https://static001.geekbang.org/resource/image/0e/3c/0e7b8c42d1daf631b19c7164ac4bdf3c.jpg)
 
 
 

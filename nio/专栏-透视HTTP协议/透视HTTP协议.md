@@ -69,6 +69,73 @@ MAC 层的传输单位是帧（frame），IP 层的传输单位是包（packet�
 
 
 
+### 06 | 域名里有哪些门道？
+
+IP地址是对物理网卡的Mac地址的抽象, 域名是对IP的抽象, 更容易记. DNS域名系统负责解析.
+"time.geekbang.org", "org"就是顶级域名, "geekbang"是二级域名, "time"则是主机名. [服务于万维网(WWW)文件的机器会自动获得主机名"www"](https://zhuanlan.zhihu.com/p/107300977)
+
+#### 域名的解析
+![DNS树状结构](https://static001.geekbang.org/resource/image/6b/f2/6b020454987543efdd1cf6ddec784bf2.png)
+1. 根域名服务器负责解析顶级域名服务器的IP
+2. 顶级域名服务器负责解析二级域名IP
+3. 权威域名服务器负责解析主机IP地址, 比如apple.com解析出www.apple.com的地址.
+
+**域名解析過程: 浏览器缓存->操作系统缓存->hosts->dns**
+1. 检查本地dns缓存是否存在解析"www.不存在.com"域名的ip
+2. 如果没有找到继续查找本地hosts文件内是否有对应的固定记录
+3. 如果hosts中还是没有那就根据本地网卡被分配的 dns server ip 来进行解析，dns server ip 一般是“非官方”的ip，比如谷歌的“8.8.8.8”，本身它也会对查找的域名解析结果进行缓存，如果它没有缓存或者缓存失效，则先去顶级域名服务器“com”去查找“不存在.com”的域名服务器ip，结果发现不存在，于是直接返回告诉浏览器域名解析错误，当然这两次查找过程是基于udp协议
+
+
+
+
+## 12/16
+
+对HTTP准确的称呼是"HTTP over TCP/IP",而另一个"HTTP over SSL/TLS"就是增加了安全功能的HTTPS.
+
+### 08 | 键入网址再按下回车，后面究竟发生了什么？
+
+#### a. 使用IP访问
+![请求过程](https://static001.geekbang.org/resource/image/86/b0/86e3c635e9a9ab0abd523c01fc181cb0.png)
+![请求过程图解](https://static001.geekbang.org/resource/image/8a/19/8a5bddd3d8046daf7032c7d60a3d1a19.png)
+因为http/1连接传输效率低, 浏览器一般会对同一个域名发起多个连接提高效率, 4-6个包的端口52086就是开的第二个连接, 但在抓包中只是打开了, 还没有传输
+
+#### b. 使用域名访问
+多一步域名解析的过程, 之后使用IP访问. 域名指向的IP可能是一台DNS服务器, 然后对真正的服务器左DNS负载均衡.
+
+#### c. 真实的网络请求
+![请求步骤](https://static001.geekbang.org/resource/image/df/6d/df4696154fc8837e33117d8d6ab1776d.png)
+1. DNS解析
+	浏览器判断是不是ip地址，不是就进行域名解析，依次通过浏览器缓存，系统缓存，host文件，DNS服务器获取IP解析(解析失败的浏览器尝试换别的DNS服务器, 最终失败的进入错误页面)
+2. 请求IP
+	如果是CDN服务器, 先看是否缓存了, 缓存了响应用户，无法缓存，缓存失效或者无缓存，回源到服务器.
+	经过防火墙外网网管路由到nginx接入层, ng缓存中存在的直接放回, 不存在的负载到web服务器. 
+	web服务器接受到请后处理, 路径不存在404. 存在的返回结果(服务器中也会有redis,ehcache(堆内外缓存)，disk等缓存策略).
+	原路返回，CDN加入缓存响应用户.
+
+
+
+
+### 09 | HTTP报文是什么样子的？
+HTTP基本不管传输, 由TCP进行发送和ACK之类的, HTTP核心部分就是传输的报文内容.
+
+#### TCP报文结构
+![TCP报文结构](https://static001.geekbang.org/resource/image/17/95/174bb72bad50127ac84427a72327f095.png)
+到了目的地把头部去掉, 拿到数据.
+
+**HTTP的报文内容:**
+![请求报文](https://static001.geekbang.org/resource/image/1f/ea/1fe4c1121c50abcf571cebd677a8bdea.png)
+![响应报文](https://static001.geekbang.org/resource/image/cb/75/cb0d1d2c56400fe9c9988ee32842b175.png)
+1. 起始行(start line):描述请求或响应的基本信息; 
+	- 请求行: 请求方法, 目标URI 版本号. POST /log HTTP/1.1
+	- 响应的状态行: 版本号, 状态码, reason. HTTP/1.1 200 OK
+2. header： key-value形式更详细地说明报文;
+3. 正文(entity): 实际传输的数据, 文本, 图片, 视频等二进制数据.
+
+
+
+### 10 | 应该如何理解请求方法？
+
+
 
 
 

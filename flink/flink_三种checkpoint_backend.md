@@ -1,0 +1,1 @@
+https://towardsdatascience.com/heres-how-flink-stores-your-state-7b37fbb60e1a

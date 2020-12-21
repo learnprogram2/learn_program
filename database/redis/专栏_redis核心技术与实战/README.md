@@ -843,16 +843,258 @@ codis dashboard 和 codis fe 来说，它们主要提供配置管理和管理员
 
 
 
+## 11/30
+### 36 | Redis支撑秒杀场景的关键技术和实践都有哪些？
+
+秒杀场景可以分成秒杀前, 秒杀中 和 秒杀后三个阶段; 每个阶段需求不同, redis不能支撑所有;
+
+#### a. 秒杀场景的负载特征对支撑系统的要求
+并发量高, 读多写少.
+
+#### b. Redis 可以在秒杀场景的哪些环节发挥作用？
+1. 秒杀前: 用户不断刷新商品详情页, 页面静态化, CDN缓存.
+
+2. 秒杀活动开始: 下单 库存查验, 库存扣减和订单处理. 
+- redis保存库存量, 提供查询
+- redis直接扣除库存, 保证查询的原子性. 扣库存不能转移到MySQL: 带来MySQL和redis同步的开销, 数据库太慢撑不住.
+	还可以用分布式锁... 但是太慢了.
+![redis](https://static001.geekbang.org/resource/image/7c/1b/7c3e5def912d7c8c45bca00f955d751b.jpg)
+
+3. 秒杀结束: 没抢到的用户刷新等待退单, 抢到的跟踪订单状态. 压力较小. 
+
+
+想起之前做的redis记分, 每个用户的分数相加, 最后和redis的总分不等. 这就是原子性没有保证. 
+做好了自己认为的原子性, 还应该做定时任务把两个分数保证最终一致性. 
+这个秒杀就是按照redis是数据库来的, 我想为了保证DR, 在项目重启的时候, 还要有任务去统计订单数和配置库存, 才能恢复redis中的库存.
+
+问题: 商品的库存量800, 使用一个4个实例的切片集群来服务秒杀请求. 每个实例各自维护库存量 200, 客户端的秒杀请求可以分发到不同的实例上进行处理, 你觉得这是一个好方法吗?
+	要做到均分请求. 不然可能会展示剩余库存, 但是用户抢不到. 
+	秒杀系统最重要的是，把大部分请求拦截在最前面，只让很少请求能够真正进入到后端系统，降低后端服务的压力，常见的方案包括：页面静态化（推送到CDN）、网关恶意请求拦截、请求分段放行、缓存校验和扣减库存、消息队列处理订单。
+
+
+
+
+## 12/01
+
+
+### 37 | 数据分布优化：如何应对数据倾斜？
+
+- 切片集群中，数据会按照一定的分布规则分散到不同的实例上保存. 数据倾斜有两种
+	- 数据量倾斜
+	- 数据访问倾斜
+
+#### a. 数据量倾斜的成因和应对方法
+- bigkey 导致倾斜: 要尽量避免把过多的数据保存在同一个键值对中
+- slot 分配不均: `CLUSTER SLOTS`命令查看slot分配情况. `CLUSTER setslot`分配slot.
+	手动的从source实例上拿slot里面的key, migrate到新的实例里:
+	`MIGRATE 192.168.10.5 6379 "" 0 timeout KEYS key1 key2 key3`
+- hash tag: hash-tag是对key指定用来hash的部分: user:profile:{3231} 3231是要做hash的部分.
+	hash-tag一般用在cluster想要把数据放到同一个实例上.
+	这种数据倾斜不好做. 要结合数据考虑.
+	
+#### b. 数据访问倾斜的成因和应对方法
+
+原因: 实例上存在热点数据
+解决: 只读的热点数据, 可以多副本, 分散请求.
+
+![数据倾斜原因和解决方法](https://static001.geekbang.org/resource/image/09/6f/092da1ee7425d20b1af4900ec8e9926f.jpg)
+
+问题: 如果 热点数据过期, 会怎样?
+数据库会爆炸. 发生了缓存击穿
+
+
+
+
+### 38 | 通信开销：限制Redis Cluster规模的关键因素
+
+Redis 官方给出了 Redis Cluster 的规模上限，就是一个集群运行 1000 个实例, 因为实例之间的通讯开销越来越大, 吞吐量会下降.
+
+#### a. 实例通信方法和对集群规模的影响
+实例之间Goossip协议通讯. 
+![通讯](https://static001.geekbang.org/resource/image/5e/86/5eacfc36c4233ae7c99f80b1511yyb86.jpg)
+Gossip通讯协议开销有: 消息大小, 通讯频率.
+
+#### b. Gossip 消息大小 每个data 104byte
+```c
+typedef struct { 
+	char nodename[CLUSTER_NAMELEN]; //40字节 
+	uint32_t ping_sent; //4字节 
+	uint32_t pong_received; //4字节 
+	char ip[NET_IP_STR_LEN]; //46字节 
+	uint16_t port; //2字节 
+	uint16_t cport; //2字节 
+	uint16_t flags; //2字节 
+	uint32_t notused1; //4字节
+} clusterMsgDataGossip;
+```
+- 每次Gossip消息, 会发送自身的data, 还有集群十分之一的实例的信息;
+- 还会包括bitmap, 这是2kb 16384个bit位标记自己的slot.
+ 1000个实例的集群PING包含101个实例的状态信息, 104*101字节+2kb = 12KB, 来回24kb.
+
+#### c. 实例间通信频率
+每秒从实例列表跳出5个实例, 选出1个最就没通讯的发送PING消息.
+每100ms检查没有接收PONG消息的实例时间超过timeout, 就会发送PING
+计算: 如果100ms检查出1个, 然后每秒发送1个, 那么每秒发送11个, 1000集群里面12*11*2=288kb/s.
+
+#### d. 如何降低实例间的通信开销？
+避免过多的心跳消息挤占集群带宽, 我们可以调大cluster-node-timeout值, 从10s调大到20-25s.
+
+使用tcpdump抓包: `tcpdump host 192.168.10.3 port 16379 -i 网卡名 -w /tmp/r1.cap`
+
+问题: 把slot分配信息和实力状态信息放在zk上, 会对集群规模有什么影响:
+集群规模可以扩大. 每次部分拉取数据. 集群内单个实例的通信开销, 不会随着实例的增加而增长太多.
+
+
+
+## 12/02
+
+### 39 | Redis 6.0的新特性：多线程、客户端缓存与安全
+
+#### a. 从单线程处理网络请求到多线程处理
+redis后台线程和子进程负责(数据惰性删除, DBA生成, AOF重写), 其他的从网络IO处理到读写命令处理都是单线程. 
+- 用户态网络协议栈(例如 DPDK)取代内核网络协议栈可以加快IO, 网络请求的处理不用在内核里执行, 直接在用户态完成处理.
+- IO多线程
+
+![IO处理流程](https://static001.geekbang.org/resource/image/58/cd/5817b7e2085e7c00e63534a07c4182cd.jpg)
+![IO写回流程](https://static001.geekbang.org/resource/image/2e/1b/2e1f3a5bafc43880e935aaa4796d131b.jpg)
+
+1. 设置 io-thread-do-reads 配置项为 yes，表示启用多线程. 配置线程个数: `io-threads 6` 小于CPU个数
+
+#### b. 实现服务端协助的客户端缓存
+Tracking 功能实现了两种模式解决server更新通知client: 需要client开启RESP3协议
+1. 普通模式: redis向client发送invalidate消息: `CLIENT TRACKING ON|OFF` 开启
+2. 广播模式: redis向client广播所有key失效情况. client注册跟踪消息key前缀: `CLIENT TRACKING ON BCAST PREFIX prefixxxx` 开启
+
+#### c. 从简单的基于密码访问到细粒度的权限控制
+
+#### d. 启用 RESP 3 协议
+
+![redis6.0特性](https://static001.geekbang.org/resource/image/21/f0/2155c01bf3129d5d58fcb98aefd402f0.jpg)
+
+
+
+### 40 | Redis的下一步：基于NVM内存的实践
+非易失存储(Non-Volatile Memory, NVM): 能持久化保存数据, 读写速度和DRAM接近, 容量大.
+
+在 Memory 模式时，Redis 可以利用 NVM 容量大的特点，实现大容量实例，保存更多数据。在使用 App Direct 模式时，Redis 可以直接在持久化内存上进行数据读写，在这种情况下，Redis 不用再使用 RDB 或 AOF 文件了，数据在机器掉电后也不会丢失。
+
+
+
+### 41 | 常见问题答疑
+
+redis与Memcache对比:
+![](https://static001.geekbang.org/resource/image/9e/29/9eb06cfea8a3ec6fced6e736e4e9ec29.jpg)
+redis与rocksDB对比: 
+![](https://static001.geekbang.org/resource/image/7c/82/7c0a225636f4983cb56a5b7265cf5982.jpg)
+
+????? TODO 一致性hash算法是什么
+
+
+### 期末测试 | 知识点: TODO
+
+
+### 
+
+
+
+## 12/03 加餐
+
+### 用户Kaito的学习分享
+![学习路径](https://static001.geekbang.org/resource/image/0e/3c/0e7b8c42d1daf631b19c7164ac4bdf3c.jpg)
 
 
 
 
 
+## 12/09
+
+### 加餐（七） | 从微博的Redis实践中，我们可以学到哪些经验？
+总结来说，微博对 Redis 的技术需求可以概括为 3 点，分别是高性能、大容量和易扩展。
+
+#### a. weibo 对 redis的改进
+1. RDB+增量AOF的混合使用
+2. AOF写磁盘异步
+3. 主从同步独立线程
+
+#### b. 微博如何应对大容量数据存储需求？
+
+weibo对冷热数据区分, 热数据放redis, 冷数据用RocksDB写入磁盘.
+![使用异步线程在RocksDB中读写数据](https://static001.geekbang.org/resource/image/c0/b0/c0fdb8248a3362afd29d3efe8b6b21b0.jpg)
+
+
+#### c. 不同业务线 redis服务化
+使用redis集群来服务不同业务, 不同业务有独立资源. 所有redis实例形成资源池. 
+
+![redis服务化集群](https://static001.geekbang.org/resource/image/58/ff/58dc7b26b8b0a1df4fd1faeee24618ff.jpg)
+
+
+
+问题: 有没有redis优化和二次开发经验:
+无, 一个同学说把redis的同步做了类binlog的形式, 由数据同步中间件来做, 保持了高性能和稳定, 像必须redis自己的主从复制. 
 
 
 
 
 
+### 加餐（四） | Redis客户端如何与服务器端交换命令和数据？
+
+RESP协议(redis serialization protocol)
+
+
+
+### 加餐（六）| Redis的使用规范小建议
+
+#### a. 规范一：key 的命名规范
+1. 业务名:业务数据名:id.
+2. 要控制key的长度.
+
+#### b. 规范二：避免使用 bigkey
+1. value 的设计规范最重要就是避免bigkey
+2. 高效序列化方法和压缩方法
+
+#### e. 规范一：使用 Redis 保存热数据
+
+#### f. 规范二：不同的业务数据分实例存储
+
+![总结](https://static001.geekbang.org/resource/image/f2/fd/f2513c69d7757830e7f3e3c831fcdcfd.jpg)
+
+```java
+业务层面主要面向的业务开发人员：
+1、key 的长度尽量短，节省内存空间
+2、避免 bigkey，防止阻塞主线程
+3、4.0+版本建议开启 lazy-free
+4、把 Redis 当作缓存使用，设置过期时间
+5、不使用复杂度过高的命令，例如SORT、SINTER、SINTERSTORE、ZUNIONSTORE、ZINTERSTORE
+6、查询数据尽量不一次性查询全量，写入大量数据建议分多批写入
+7、批量操作建议 MGET/MSET 替代 GET/SET，HMGET/HMSET 替代 HGET/HSET
+8、禁止使用 KEYS/FLUSHALL/FLUSHDB 命令
+9、避免集中过期 key
+10、根据业务场景选择合适的淘汰策略
+11、使用连接池操作 Redis，并设置合理的参数，避免短连接
+12、只使用 db0，减少 SELECT 命令的消耗
+13、读请求量很大时，建议读写分离，写请求量很大，建议使用切片集群
+
+运维层面主要面向的是 DBA 运维人员：
+1、按业务线部署实例，避免多个业务线混合部署，出问题影响其他业务
+2、保证机器有足够的 CPU、内存、带宽、磁盘资源
+3、建议部署主从集群，并分布在不同机器上，slave 设置为 readonly
+4、主从节点所部署的机器各自独立，尽量避免交叉部署，对从节点做维护时，不会影响到主节点
+5、推荐部署哨兵集群实现故障自动切换，哨兵节点分布在不同机器上
+6、提前做好容量规划，防止主从全量同步时，实例使用内存突增导致内存不足
+7、做好机器 CPU、内存、带宽、磁盘监控，资源不足时及时报警，任意资源不足都会影响 Redis 性能
+8、实例设置最大连接数，防止过多客户端连接导致实例负载过高，影响性能
+9、单个实例内存建议控制在 10G 以下，大实例在主从全量同步、备份时有阻塞风险
+10、设置合理的 slowlog 阈值，并对其进行监控，slowlog 过多需及时报警
+11、设置合理的 repl-backlog，降低主从全量同步的概率
+12、设置合理的 slave client-output-buffer-limit，避免主从复制中断情况发生
+13、推荐在从节点上备份，不影响主节点性能
+14、不开启 AOF 或开启 AOF 配置为每秒刷盘，避免磁盘 IO 拖慢 Redis 性能
+15、调整 maxmemory 时，注意主从节点的调整顺序，顺序错误会导致主从数据不一致
+16、对实例部署监控，采集 INFO 信息时采用长连接，避免频繁的短连接
+17、做好实例运行时监控，重点关注 expired_keys、evicted_keys、latest_fork_usec，这些指标短时突增可能会有阻塞风险
+18、扫描线上实例时，记得设置休眠时间，避免过高 OPS 产生性能抖动
+
+```
 
 
 

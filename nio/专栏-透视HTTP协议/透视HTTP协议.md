@@ -186,6 +186,48 @@ query参数针对的是资源（uri），而字段针对的是本次请求，也
 
 
 
+## 12/21
+
+### 12 | 响应状态码该怎么用？
+
+响应的状态行: "Version status_code reason": "HTTP/1.1 200 OK"
+
+#### 状态码: 
+000->999. 三位数, 分为五类:
+1××：提示信息，表示目前是协议处理的中间状态，还需要后续的操作； 
+	101 Switching Protocols: webSocket更改HTTP协议的时候就会发送
+2××：成功，报文已经收到并被正确处理；
+	200 OK
+	204 ok no content
+	206 ok partial content
+3××：重定向，资源位置发生变动，需要客户端重新发送请求；
+	301 moved permanently 永久重定向
+	302 moved temporarily 暂时重定向, 在header的location指定后续跳转URL.
+	304 not modified 可以用缓存.
+4××：客户端错误，请求报文有误，服务器无法处理；
+	400 badrequest: 请求参数有问题
+	403 forbidden
+	404 not found
+	...
+5××：服务器错误，服务器在处理请求时内部发生了错误。
+	500 internal server error
+	501 not implemented
+	502 bad gateway
+	503 service unavailable
+
+
+### 13 | HTTP有哪些特点？
+
+[特点](https://static001.geekbang.org/resource/image/78/4a/7808b195c921e0685958c20509855d4a.png)
+
+
+对比 UDP协议, 不过它是无连接也无状态的, 顺序发包乱序收包，数据包发出去后就不管了，收到后也不会顺序整理。而 HTTP 是有连接无状态，顺序发包顺序收包，按照收发的顺序管理报文。
+
+### 14 | HTTP有哪些优点？又有哪些缺点？
+
+- 明文传输, HTTPS
+- 性能不够好, HTTP/2 和 HTTP/3
+
 
 
 

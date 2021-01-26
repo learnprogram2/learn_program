@@ -67,8 +67,6 @@ MAC 层的传输单位是帧（frame），IP 层的传输单位是包（packet�
 
 
 
-
-
 ### 06 | 域名里有哪些门道？
 
 IP地址是对物理网卡的Mac地址的抽象, 域名是对IP的抽象, 更容易记. DNS域名系统负责解析.
@@ -133,8 +131,6 @@ HTTP基本不管传输, 由TCP进行发送和ACK之类的, HTTP核心部分就�
 
 
 
-
-
 ### 10 | 应该如何理解请求方法？
 
 #### a. HTTP1.1 有8种请求方式
@@ -185,7 +181,6 @@ query参数针对的是资源（uri），而字段针对的是本次请求，也
 
 
 
-
 ## 12/21
 
 ### 12 | 响应状态码该怎么用？
@@ -227,6 +222,228 @@ query参数针对的是资源（uri），而字段针对的是本次请求，也
 
 - 明文传输, HTTPS
 - 性能不够好, HTTP/2 和 HTTP/3
+
+
+
+
+## 12/30 HTTP协议内容
+
+### 15 | 海纳百川：HTTP的实体数据
+#### a. 数据类型与编码
+1. Accept: 是MIME type 标记body内容.
+2. Accept-Encoding: 标记body数据格式.
+#### b. 语言类型与编码
+1. 请求头: Accept-Language, Accept-Charset: gbk, utf-8
+2. 响应头: Content-Language, Content-Type: text/html; charset=utf-8
+
+#### c. 内容协商
+Accept 等头字段可以用“,”顺序列出多个可能的选项，还可以用“;q=”参数来精确指定权重:
+`Accept: text/html,application/xml;q=0.9,*/*;q=0.8`
+
+
+
+
+### 16 | 把大象装进冰箱：HTTP传输大文件的方法
+
+
+1. 数据压缩: 通过content-encoding告诉浏览器.
+2. 分块传输: 响应头`Transfer-Encoding: chunked`, 把文件分块.
+3. 范围请求: 请求一个文件的一部分
+
+
+
+
+### 17 | 排队也要讲效率：HTTP的连接管理
+
+#### 短连接
+HTTP(0.9/1.0), 在传输完之后马上断掉TCP/IP, 是短连接.
+TCP链接三次握手, 关闭四次挥手.
+
+#### 长连接
+HTTP1.1默认长连接: `Connection: keep-alive`.
+
+
+#### 队头阻塞
+如果长连接里第一个阻塞了, 那么之后也会阻塞.
+1. 并发连接: 对一个域名发起多个长连接.
+2. 域名分片: 多开几个域名, 指向同一台服务器. 解决客户端的限制.
+
+
+
+
+### 18 | 四通八达：HTTP的重定向
+
+#### 外部重定向的过程
+1. 响应301/302, 加一个location:/uri/to/resource
+2. 永久/临时重定向: 301/302
+
+#### 内部重定向
+是一个router的概念.
+
+
+### 19 | 让我知道你是谁：HTTP的Cookie机制
+
+
+
+### 20 | 生鲜速递：HTTP的缓存控制
+
+#### a. 服务器的缓存控制
+浏览器向服务器请求资源, 服务器响应资源, 并标记有效期. 使用Header的"Cache-Control"标记
+
+#### b. 条件请求
+验证资源是否失效, 常用的是“if-Modified-Since”和“If-None-Match”，收到 304 就可以复用缓存里的资源;
+
+
+
+
+## 1/06
+
+### 21 | 良心中间商：HTTP的代理服务
+
+![Http代理](https://static001.geekbang.org/resource/image/28/f9/28237ef93ce0ddca076d2dc19c16fdf9.png)
+代理服务本身不生产内容，而是处于中间位置转发上下游的请求和响应，具有双重身份.
+
+#### a. 代理的作用
+
+负载均衡, 解决其他的几乎所有的增强功能. 正向代理: 代理client, 反向代理: 代理server.
+
+#### b. 代理相关头字段
+如果双方要获取原始信息: 
+1. 代理服务器需要用字段“Via”标明自己的代理身份 多个代理会追加via字段, 形成链表: "Via: proxy1, proxy2"
+2. "X-Forwarded-For"表示主机IP, "X-Real-IP"标识客户端的IP
+
+
+
+
+
+
+## 01/26
+
+### 22 | 冷链周转：HTTP的缓存代理
+
+Http缓存控制+代理服务合起来就是缓存代理.
+
+1. HTTP 的服务器缓存功能主要由代理服务器来实现（即缓存代理）
+2. Http-client端缓存
+
+#### a. 缓存代理服务
+![代理缓存](https://static001.geekbang.org/resource/image/5e/c2/5e8d10b5758685850aeed2a473a6cdc2.png)
+1. 缓存代理服务器会把后台服务器的响应缓存到cache里
+2. 下次相同请求, 缓存代理服务器直接发送304(未变化), 或者cache里的缓存数据
+
+#### b. 缓存控制
+1. 缓存代理的缓存控制
+![缓存代理服务器的缓存控制流程](https://static001.geekbang.org/resource/image/09/35/09266657fa61d0d1a720ae3360fe9535.png)
+
+2. 客户端的缓存控制
+![客户端的缓存控制](https://static001.geekbang.org/resource/image/47/92/47c1a69c800439e478c7a4ed40b8b992.png)
+
+
+
+
+
+
+# 安全篇
+
+### 23 | HTTPS是什么？SSL/TLS又是什么？
+Http的无状态, 可以通过cookie解决, 明文需要用Https协议. HTTPS 的安全性是由 TLS保证
+
+#### a. 通讯安全
+1. 机密性(secery/Confidentiality): 数据的保密, 只能可信的人访问
+2. 完整性(Integrity): 数据的传输不能被篡改.
+3. 身份认证(authentication): 消息指发送给可信的人.
+4. 不可否认(non-repudiation/undeniable): 不能抵赖.
+
+#### b. HttpS是什么
+除了协议名"http"和端口号80不同.HTTPS协议在语法, 语义上和 HTTP 完全一样. 
+抓包, 多了"Client Hello" 和 "Server Hello"等新的数据包. "HTTP over TCP/IP"变成了"HTTP over SSL/TLS"
+![HTTPS协议](https://static001.geekbang.org/resource/image/50/a3/50d57e18813e18270747806d5d73f0a3.png)
+
+#### c. SSL/TLS
+- SSL 即安全套接层(Secure Sockets Layer), OSI模型的第五层(会话层). SSL在3.0时候改名TLS(Transport layer security)1.0
+- SSL/TLS 是信息安全领域中的权威标准，采用多种先进的加密技术保证通信安全
+- 机密性由对称加密AES保证，完整性由SHA384摘要算法保证，身份认证和不可否认由RSA非对称加密保证
+```text
+实验环境使用的 TLS 是 1.2，客户端和服务器都支持非常多的密码套件，而最后协商选定的是“ECDHE-RSA-AES256-GCM-SHA384”
+```
+
+
+
+
+### 24 | 固若金汤的根本（上）：对称加密与非对称加密
+
+![对称加密](https://static001.geekbang.org/resource/image/8f/49/8feab67c25a534f8c72077680927ab49.png)
+1. 对称加密: 加密和解密使用的密钥是同一个. TLS可以用多种对称加密算法, 常用AES 和 ChaCha20.
+    - AES:Advanced Encryption Standard, 高级加密标准, 密钥长度可选128/192/256. 性能挺好的.
+2. 对称加密的加密分组模式: 让算法用固定长度的密钥加密解密任意长度明文.
+    - AEAD: 在加密的时候增加了认证功能
+    - GCM: 例如AES128-GCM: 密钥长度128位的AES对称加密算法, 分组模式是GCM.
+
+
+![非对称加密](https://static001.geekbang.org/resource/image/89/17/89344c2e493600b486d5349a84318417.png)
+1. 非对称加密: (私钥解密, 公钥加密. 私钥签名, 公钥解签名). 运算复杂, 加密需要更多位数
+    - RSA: 最常用(2048位比较安全)
+    - ECC: 新秀.
+2. 混合加密: 性能和安全兼顾.
+    1. 通讯刚开始使用非对称加密: 解决密钥交换问题
+    2. 随机数产生*会话密钥*(session key). 使用公钥加密.
+    3. server端使用私钥解密, 取出session-key, 然后就用它做 对称加密.
+    ![混合加密](https://static001.geekbang.org/resource/image/e4/85/e41f87110aeea3e548d58cc35a478e85.png)
+ 
+3. 简单理解TLS: 通信双方通过非对称加密协商出一个用于对称加密的密钥.
+
+
+### 25 | 固若金汤的根本（下）：数字签名与证书
+混合加密还没有解决的漏洞: 完整性, 身份认证.
+1. (请求不完整也会处理)黑客收集足够多的通讯, 然后一起发给server, 造成server阻塞.
+2. (通讯不做身份认证)黑客拦截server响应, 发送乱序的. 或者发布假公钥, 冒充server. 
+
+#### a. [完整性]摘要算法(Digest Algorithm)
+![完整性](https://static001.geekbang.org/resource/image/c2/96/c2e10e9afa1393281b5633b1648f2696.png)
+1. hash映射. 单向压缩算法, 无法解密, 把数据压缩成独一无二的固定长度字符, 作为数据的"指纹". MD5, SHA-1最常见, 推荐SHA-2.
+2. 完整性: 在数据后面附上SHA算法摘要来保证. 还要建立在所有数据的密文传输上.
+
+#### b. [身份认证]数字签名
+![数字签名原理](https://static001.geekbang.org/resource/image/84/d2/84a79826588ca35bf6ddcade027597d2.png)
+1. client公钥加密请求server, server对client的请求的摘要做私钥加密, 响应
+2. client收到后, 用公钥解密看看原来的摘要是不是被私钥加密了一遍, 如果是就是真正的server签名(加密)了.
+
+#### c. [避免假公钥]数字证书和 CA
+CA(Certificate Authority) 证书认证机构.
+
+**数字证书**: 公钥, 序列号, 用途, 颁发者, 有效时间.
+![CA证书体系](https://static001.geekbang.org/resource/image/8f/9c/8f0813e9555ba1a40bd2170734aced9c.png)
+小CA靠大CA认证自己, 和域名解类似的树状, 最终由RootCA"自签名证书/根证书".
+自签名证书不被浏览器信任, 单把它放到系统根证书存储区里, 就会被信任.
+- 整个体系在于信任: CA可能被攻击, 证书可能会过期/错误.
+- 流程:
+1. 服务器返回的是证书链(不包括根证书,根证书预置在浏览器中).
+2. 浏览器就可以使用自己存的的根证书解析证书链的根证书得到一级证书的公钥+摘要验签, 
+3. 然后拿一级证书的公钥解密一级证书拿到二级证书的公钥和摘要验签.
+4. 再然后拿二级证书的公钥解密二级证书得到服务器的公钥和摘要验签, 验证过程就结束了.
+
+
+
+### 26 | 信任始于握手：TLS1.2连接过程解析
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

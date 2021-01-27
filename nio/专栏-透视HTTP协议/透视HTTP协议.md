@@ -620,27 +620,69 @@ IETF 对 gQUIC 做了“清理”，把应用部分分离出来，形成了 HTTP
 
 #### d. QUIC 内部细节
 
+#### e. HTTP/3 服务发现
+浏览器需要先用 HTTP/2 协议连接服务器，然后服务器可以在启动 HTTP/2 连接后发送一个“Alt-Svc”帧，包含一个“h3=host:port”的字符串, 
+告诉浏览器在另一个端点上提供等价的 HTTP/3 服务
+
+
+#### 总结:
+1. HTTP/3 基于 QUIC 协议, 完全解决了"队头阻塞"问题, 弱网环境下的表现会优于 HTTP/2;
+2. QUIC 是一个新的传输层协议, 建立在 UDP 之上, 实现了可靠传输;
+3. QUIC 内含了 TLS1.3, 只能加密通信, 支持 0-RTT 快速建连;
+4. QUIC 的连接使用"不透明"的连接 ID, 不绑定在“IP 地址 + 端口"上, 支持"连接迁移";
+5. QUIC 的流与 HTTP/2 的流很相似，但分为双向流和单向流;
+6. HTTP/3 没有指定默认端口号，需要用 HTTP/2 的扩展帧“Alt-Svc”来发现/
+
+
+# 探索篇
+
+### 34 | Nginx: 高性能web服务器
+
+
+### 36 | WAF：保护我们的网络服务
+
+#### a. Web 服务遇到的威胁
+1. DDoS攻击(distributed denial-of-service attack) 洪水攻击.
+2. 代码注入, SQL注入
+3. HTTP头注入: 在host, user-agent, x-forwarded-for等字段加入而已数据
+
+- DDoS、代码注入本身是遵循HTTPS协议的，它的攻击面不在HTTPS协议层，而在其它层.
+#### b. 网络应用防火墙(Web Application Firewall)
+1. 传统防火墙工作在三/四层, 隔离外网和内网, 限定IP和端口数据包. 网络数据过滤.
+2. WAF工作在第七层, 是HTTP入侵检测和防御系统
 
 
 
+### 37 | CDN：加速我们的网络服务 (Content Distribution Network)
+
+只有静态资源才能够被缓存加速、就近访问，而动态资源只能由源站实时生成，即使缓存了也没有意义。不过，如果动态资源指定了“Cache-Control”，
+允许缓存短暂的时间，那它在这段时间里也就变成了“静态资源”，可以被 CDN 缓存加速。
+
+#### a. CDN 的负载均衡
+全局负载均衡和缓存系统，对应的是 DNS和缓存代理技术
+![CDN](https://static001.geekbang.org/resource/image/6c/ca/6c39e76d58d9f17872c83ae72908faca.png)
+**全局负载均衡(GlobalServerLoadBalance) GSLB**. 在用户接入网络时在CDN网络中挑一个最佳节点. 通常用: **DNS 负载均衡**.
+    1. 权威DNS返回的是服务器实际IP, CDN加入后, DNS返回是CNAME(Canonical Name)别名记录, 指向CDN的GSLB.
+    2. 本地DNS接着向GSLB请求, 就开始由CDN的GSLB负载均衡调度.
+    3. GSLB根据用户IP给它最近和相同网络的负载最轻的节点.    
+#### b. CDN 的缓存代理
+CDN 的关键概念：“命中”和“回源”. 命中是正好在缓存里, 回源是缓存里没有, 要回源站取.
+
+#### c. 总结
+1. GSLB 是 CDN 的“大脑”，使用 DNS 负载均衡技术，智能调度边缘节点提供服务；
+2. 缓存系统是 CDN 的“心脏”，使用 HTTP 缓存代理技术，缓存命中就返回给用户，否则就要回源。 
+3. 回源会利用CDN和源服务器的专属网络, 所以动态资源用CDN也会更快一点.
+ 
 
 
+### 38 | WebSocket：沙盒里的TCP
+
+- TCP-Socket是一种功能接口, 使用TCP/IP协议栈在传输层收发数据.
+- WebSocket是在HTTP上的Socket通讯规范, 和TCP-Socket类似功能, 调用下层协议栈.
+- “WebSocket”是一种基于 TCP 的轻量级网络通信协议，在地位上是与 HTTP“平级”的
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+### 39 | HTTP性能优化面面观（上）
 
 
 

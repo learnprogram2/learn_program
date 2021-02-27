@@ -1,0 +1,32 @@
+
+
+
+```java
+if (!commandState.compareAndSet(CommandState.NOT_STARTED, CommandState.OBSERVABLE_CHAIN_CREATED)) {
+    IllegalStateException ex = new IllegalStateException("This instance can only be executed once. Please instantiate a new instance.");
+    //TODO make a new error type for this
+    throw new HystrixRuntimeException(FailureType.BAD_REQUEST_EXCEPTION, _cmd.getClass(), getLogMessagePrefix() + " command executed multiple times - this is not permitted.", ex, null);
+}
+```
+### 116: 
+toObservable的执行:
+1. toObservable把HyStrixCommand放入线程池
+2. toBlocking监听了observable之后才会触发command执行
+3. 最终执行是 Command.applyHystrixSemantics(HystrixCommand)
+
+
+
+### 118.真正实行applyHystrixSemantics：尝试找到请求队列以及线程池的入口
+
+1. circuitBreaker.allowRequest() 看看熔断器让不让执行
+
+
+### 122. hystrix如何使用线程池执行任务
+这里是线程池什么时候创建的, 放入线程池之前怎么做的.
+
+
+
+
+
+
+

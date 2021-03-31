@@ -89,7 +89,9 @@
 
 ### 04. Java中如何使用BIO、NIO、AIO
 
-
+1. BIO: 卡住去接收socket的消息
+2. NIO: selector询问哪些IO准备好了, 告诉IO自己去请求内核数据.
+3. 
 
 
 

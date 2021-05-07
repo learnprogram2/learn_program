@@ -16,7 +16,30 @@ datanode存储数据, 之中有block做replicate, 实现HA.
 
 ### 17. 
 
+1. 安装三台zk, 部署zk集群
 
+2. 安装hadoop
+   1. 编辑vi core-site.xml
+   2. 编辑vi hdfs-site.xml
+
+```log
+[root@hadoop01 sbin]# ./start-dfs.sh 
+Starting namenodes on [hadoop01 hadoop02]
+Last login: Wed Mar 24 13:17:24 EDT 2021 on pts/0
+Starting datanodes
+Last login: Wed Mar 24 13:20:55 EDT 2021 on pts/0
+localhost: datanode is running as process 3625.  Stop it first.
+Starting journal nodes [hadoop05 hadoop04 hadoop03]
+Last login: Wed Mar 24 13:20:58 EDT 2021 on pts/0
+hadoop04: journalnode is running as process 3539.  Stop it first.
+hadoop05: journalnode is running as process 3529.  Stop it first.
+hadoop03: journalnode is running as process 3533.  Stop it first.
+Starting ZK Failover Controllers on NN hosts [hadoop01 hadoop02]
+Last login: Wed Mar 24 13:21:06 EDT 2021 on pts/0
+hadoop01: zkfc is running as process 4314.  Stop it first.
+hadoop02: zkfc is running as process 3488.  Stop it first.
+
+```
 
 
 

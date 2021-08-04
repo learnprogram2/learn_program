@@ -1,0 +1,205 @@
+## 传统Socket网络编程
+
+### 23-25. socket连接demo
+
+
+
+### 26. socket直连瓶颈-线程计算消耗
+
+**每一个socket连接都占一个线程, 虽然线程可能不干什么, 但是一个线程1M, 没有几千个就OOM了.**
+
+**所以直接socket连接不会到百万链接,** 
+
+一台普通的4核8G的服务器，虚拟机，100个工作线程，极限了，CPU负载就会很高了
+
+![07_Socket传统网络编程的缺陷](NIO2-%E7%BD%91%E7%BB%9C%E7%BC%96%E7%A8%8B.assets/07_Socket%E4%BC%A0%E7%BB%9F%E7%BD%91%E7%BB%9C%E7%BC%96%E7%A8%8B%E7%9A%84%E7%BC%BA%E9%99%B7.jpg)
+
+
+
+
+
+### 27. IO多路复用原理
+
+1. socketServer接收请求建立socket 维持TCP连接
+
+2. socket的inputStream -> Buffer -> channel -> selector -> 包装成task放在线程池
+
+![08_NIO网络通信原理](NIO2-%E7%BD%91%E7%BB%9C%E7%BC%96%E7%A8%8B.assets/08_NIO%E7%BD%91%E7%BB%9C%E9%80%9A%E4%BF%A1%E5%8E%9F%E7%90%86.jpg)
+
+## Selector+Buffer+Channel+Socket: 多路复用IO
+
+![image-20210508222434550](NIO2-%E7%BD%91%E7%BB%9C%E7%BC%96%E7%A8%8B.assets/image-20210508222434550.png)
+
+![image-20210509212855940](NIO2-%E7%BD%91%E7%BB%9C%E7%BC%96%E7%A8%8B.assets/image-20210509212855940.png)
+
+
+
+
+
+## 033_把基于NIO开发的网络通信程序运行起来看看-- 为什么read之后还要注册一个write事件?
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## NIO源码 - channel-selector
+
+```java
+// 大概的代码
+@SneakyThrows
+public NIOServer init() {
+    // 开启一个selector: windows的
+    selector = Selector.open();
+
+    // 开启serverSocket
+    ServerSocketChannel serverSocketChannel = ServerSocketChannel.open();
+    serverSocketChannel.configureBlocking(false);
+    serverSocketChannel.bind(new InetSocketAddress(8080)); // 这个和上个都一样, 不知道为什么.
+
+    // 绑定到selector上, 开始等待处理
+    serverSocketChannel.register(selector, SelectionKey.OP_ACCEPT);
+
+    // * 这一步是select开始检查哪个channel准备好了.
+    selector.select();
+    Iterator<SelectionKey> iterator = selector.selectedKeys().iterator();
+    while (iterator.hasNext()) {
+        SelectionKey key = iterator.next();
+        iterator.remove();
+        handleKey(key);
+    }
+}
+private void handleKey(SelectionKey key) throws IOException {
+    if (key.isAcceptable()) {
+        // 连接请求: OP_ACCEPT的key
+        ServerSocketChannel serverSocketChannel = (ServerSocketChannel) key.channel();
+        SocketChannel socketChannel = serverSocketChannel.accept(); 
+        socketChannel.configureBlocking(false);
+        socketChannel.register(selector, SelectionKey.OP_READ);
+    } else if (key.isReadable()) {
+        // 消息就绪了
+        SocketChannel socketChannel = (SocketChannel) key.channel();
+        readBuffer.clear();
+        int len; 
+        while ((len = socketChannel.read(readBuffer)) > 0) {
+            readBuffer.flip();
+            String req = DECODER.decode(readBuffer).toString();
+            System.out.println(req);
+            // TODO 怎么调用的socket的输出
+            socketChannel.write(ENCODER.encode(CharBuffer.wrap("thanks")));
+        }
+        // 着处理完连接, 就把这个socket给关掉了!!!!!!!!!
+        // socketChannel.close();
+    }
+}
+```
+
+
+
+### 034. 1-服务端初始化过程-创建Selector, ServerSocketChannel
+
+![image-20210509174018750](NIO2-%E7%BD%91%E7%BB%9C%E7%BC%96%E7%A8%8B.assets/image-20210509174018750.png)
+
+> - **ServerSocketChannel**: A selectable(通过selector实现多路复用) channel for stream-oriented listening sockets.
+
+#### 1. ServerSocketChannel创建, 配置的流程
+
+```java
+// 1. 创建一个ServerSocketChannel+ServerSocket, 绑定到8080端口.
+ServerSocketChannel serverSocketChannel = ServerSocketChannel.open();
+serverSocketChannel.configureBlocking(false);
+serverSocketChannel.socket().bind(new InetSocketAddress(8080), 100);
+/**
+ * 开启一个 server-socket channel.
+ * 通过调用系统层级的 SelectorProvider#openServerSocketChannel, 开启.
+ *
+ * 新的channel的server-socket是没有绑定到端口上的, 要注意先绑定才能收到连接请求.
+ *
+ * @return  A new socket channel
+ */
+public static ServerSocketChannel open() throws IOException {
+    return 
+        // 1. 先找一个系统的provider, 这个先从系统变量,SPI来加载创建, 默认的是
+        //		sun.nio.ch.WindowsSelectorProvider
+        //		然后再openSelector(), 会创建一个WindowsSelectorImpl
+        SelectorProvider.provider()
+        // 2. 创建一个 ServerSocketChannelImpl
+        .openServerSocketChannel();
+}
+```
+
+#### 2. ServerSocketChannel配置端口
+
+```java
+// 这个是创建一个ServerSocketAdaptor, 注释里写了, 让ServerSocketChannel看起来像是一个socket
+serverSocketChannel.socket().bind(new InetSocketAddress(8080), 100);
+// 2. 第二种是直接绑定, 不需要伪装了
+serverSocketChannel.bind(new InetSocketAddress(8080)); // 这个和上个都一样, 不知道为什么.
+```
+
+
+
+### 035. 2-channel注册到selector上
+
+1、第一次注册：会走底层的类库，把channel和感兴趣的key注册到selector里去
+
+2、keys数组：他会自动初始化，每个channel感兴趣的key，都会放到keys数组里面去
+
+3、一个channel反复注册：本质就是改变keys数组里的那个感兴趣的操作而已
+
+4、keys数组的扩容：如果keys数组越来越多的话，此时就会自动每次乘以2倍来进行扩容
+
+![image-20210509184353537](NIO2-%E7%BD%91%E7%BB%9C%E7%BC%96%E7%A8%8B.assets/image-20210509184353537.png)
+
+
+
+### 3-selector.select() 阻塞收取端口数据 -> 对应serverSocketChannel ->key的ops来了.
+
+![image-20210509203036728](NIO2-%E7%BD%91%E7%BB%9C%E7%BC%96%E7%A8%8B.assets/image-20210509203036728.png)
+
+
+
+### 4-处理连接请求的selectionKey: serverSocketChannel.accept();
+
+```java
+// 我们的代码:
+// 连接请求: OP_ACCEPT的key
+ServerSocketChannel serverSocketChannel = (ServerSocketChannel) key.channel();
+SocketChannel socketChannel = serverSocketChannel.accept(); 
+socketChannel.configureBlocking(false);
+socketChannel.register(selector, SelectionKey.OP_READ);
+```
+
+
+
+> **为连接请求三次握手, 创建新的socket**
+
+![image-20210509211149148](NIO2-%E7%BD%91%E7%BB%9C%E7%BC%96%E7%A8%8B.assets/image-20210509211149148.png)
+
+```java
+// 1. 三次握手嘛
+// 把新的fd设置给新的socket. 
+// Accepts a new connection, setting the given file descriptor to refer to
+// the new socket and setting isaa[0] to the socket's remote address.
+// Returns 1 on success, or IOStatus.UNAVAILABLE (if non-blocking and no
+// connections are pending) or IOStatus.INTERRUPTED.
+private native int accept0(FileDescriptor ssfd,
+                           FileDescriptor newfd,
+                           InetSocketAddress[] isaa) throws IOException;
+```
+
+
+

@@ -2,3 +2,5 @@
 framework_documents_new.iml
 leetcode/Solution.java
 .gradle
+build.sh
+

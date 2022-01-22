@@ -1,2 +1,0 @@
-- name: Setup Jira
-  uses: atlassian/gajira-cli@v2.0.1
